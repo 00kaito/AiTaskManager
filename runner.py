@@ -54,11 +54,14 @@ logger = logging.getLogger(__name__)
 
 class Orchestrator:
     def __init__(self, project_root: Path = None):
-        self.project_root = project_root or Path.cwd()
+        # Jeśli nie podano, przyjmij katalog nadrzędny wobec folderu taskmanager
+        self.project_root = project_root or config.base_dir.parent
         self.repo = TaskRepository()
         self.claude = ClaudeAgent()
         self.gemini = GeminiAgent()
         self.git = GitHelper(self.project_root) if config.use_git else None
+        
+        logger.info(f"Project root set to: {self.project_root}")
 
     # ── Publiczny entry point ──
 

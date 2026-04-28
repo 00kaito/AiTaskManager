@@ -200,9 +200,13 @@ def build_codebase_summary(project_root: Path, max_chars: int = 60000) -> str:
     """Zbiera strukturę plików i fragmenty kodu do kontekstu dla Claude."""
     lines = ["## File tree\n```"]
 
-    # Drzewo plików (ignoruj typowe śmieci)
+    # Pobierz nazwę folderu w którym jest skrypt, żeby go zignorować
+    orchestrator_dir = Path(__file__).parent.name
+
+    # Drzewo plików (ignoruj typowe śmieci + folder orkiestratora)
     ignore = {".git", "__pycache__", "node_modules", ".venv", "venv",
-               "dist", "build", ".mypy_cache", ".pytest_cache", "runs"}
+               "dist", "build", ".mypy_cache", ".pytest_cache", "runs",
+               orchestrator_dir}
 
     for p in sorted(project_root.rglob("*")):
         if any(part in ignore for part in p.parts):

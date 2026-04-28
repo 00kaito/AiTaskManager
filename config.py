@@ -9,9 +9,10 @@ from pathlib import Path
 
 @dataclass
 class OrchestratorConfig:
-    # --- Ścieżki ---
-    runs_dir: Path = field(default_factory=lambda: Path("runs"))
-    db_path: Path = field(default_factory=lambda: Path("orchestrator.db"))
+    # --- Ścieżki (automatycznie wykrywa folder taskmanager) ---
+    base_dir: Path = field(default_factory=lambda: Path(__file__).parent)
+    runs_dir: Path = field(default_factory=lambda: Path(__file__).parent / "runs")
+    db_path: Path = field(default_factory=lambda: Path(__file__).parent / "orchestrator.db")
 
     # --- Limity pętli ---
     max_iterations: int = 6          # max rund IMPLEMENTING → REVIEWING
