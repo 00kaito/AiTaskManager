@@ -1,0 +1,18 @@
+# Orchestrator dependencies
+# Standardowa biblioteka Python pokrywa większość potrzeb.
+# Poniżej tylko to, co faktycznie jest używane.
+
+# Brak zewnętrznych zależności wymaganych do działania core'u!
+# SQLite, subprocess, json, pathlib — wszystko w stdlib Python 3.11+
+
+# --- Opcjonalne (dla rozszerzeń) ---
+
+# Rich — ładniejszy output w terminalu (opcjonalne, do monitoringu)
+rich>=13.0.0
+
+# Pydantic — jeśli chcesz silniejszą walidację JSON (opcjonalne)
+# pydantic>=2.0.0
+
+# pytest — do testów
+pytest>=8.0.0
+pytest-timeout>=2.3.0
