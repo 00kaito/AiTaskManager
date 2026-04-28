@@ -22,6 +22,8 @@ class TaskStatus(str, Enum):
     NEW = "NEW"
     ARCHITECTING = "ARCHITECTING"
     IMPLEMENTING = "IMPLEMENTING"
+    AWAITING_HUMAN = "AWAITING_HUMAN"
+    HUMAN_FEEDBACK = "HUMAN_FEEDBACK"
     REVIEWING = "REVIEWING"
     CHANGES_REQUESTED = "CHANGES_REQUESTED"
     APPROVED = "APPROVED"
@@ -87,6 +89,8 @@ class Task:
     architect_plan: str = ""
     last_diff: str = ""
     task_start_sha: str = ""          # SHA commita sprzed startu — do pełnego diffa
+    human_feedback: str = ""          # feedback człowieka gdy powiedział "fail"
+    fix_plan: str = ""                # plan naprawy Claude'a (z human feedback lub code review)
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
@@ -108,6 +112,8 @@ class Task:
     @staticmethod
     def from_dict(d: dict) -> "Task":
         d["status"] = TaskStatus(d["status"])
+        d.setdefault("human_feedback", "")
+        d.setdefault("fix_plan", "")
         return Task(**d)
 
 

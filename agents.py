@@ -176,14 +176,15 @@ class ClaudeAgent(BaseAgent):
         timeout: Optional[int] = None,
     ) -> AgentResult:
         """
-        Wywołuje `claude -p <prompt> --output-format json`.
-        expect_json=True → waliduje i parsuje JSON w odpowiedzi.
+        Wywołuje `claude --print --output-format json`.
+        Rozpakowuje kopertę CLI: {"result": "...", "is_error": false, ...}
+        expect_json=True → waliduje i parsuje JSON z pola result.
         """
         effective_timeout = timeout or config.claude_timeout
 
         cmd = [
             config.claude_bin,
-            "--print",           # nie-interaktywny tryb
+            "--print",
             "--output-format", "json",
             prompt,
         ]
@@ -192,7 +193,60 @@ class ClaudeAgent(BaseAgent):
             f"[claude] Calling Claude Code "
             f"(timeout={effective_timeout}s, json={expect_json})"
         )
-        return self._call_with_retry(cmd, cwd, effective_timeout, expect_json)
+
+        # expect_json=False — walidację robimy sami po rozpakowaniu koperty
+        raw = self._call_with_retry(cmd, cwd, effective_timeout, expect_json=False)
+        if not raw.success:
+            return raw
+
+        # Claude CLI zawija odpowiedź w kopertę JSON: {"result": "...", "is_error": false, ...}
+        envelope = self._parse_json(raw.raw_output)
+        if not isinstance(envelope, dict):
+            return AgentResult(
+                success=False,
+                error=f"Nieparsowalna odpowiedź CLI: {raw.raw_output[:200]}",
+                raw_output=raw.raw_output,
+                attempts=raw.attempts,
+                duration_sec=raw.duration_sec,
+            )
+
+        if envelope.get("is_error"):
+            return AgentResult(
+                success=False,
+                error=envelope.get("result", "Claude zwrócił błąd"),
+                raw_output=raw.raw_output,
+                attempts=raw.attempts,
+                duration_sec=raw.duration_sec,
+            )
+
+        claude_text = envelope.get("result", "")
+
+        if not expect_json:
+            return AgentResult(
+                success=True,
+                raw_output=claude_text,
+                attempts=raw.attempts,
+                duration_sec=raw.duration_sec,
+            )
+
+        parsed = self._parse_json(claude_text)
+        if parsed is None:
+            logger.warning(f"[claude] Brak JSON w odpowiedzi: {claude_text[:200]}")
+            return AgentResult(
+                success=False,
+                error=f"Claude nie zwrócił JSON: {claude_text[:200]}",
+                raw_output=claude_text,
+                attempts=raw.attempts,
+                duration_sec=raw.duration_sec,
+            )
+
+        return AgentResult(
+            success=True,
+            raw_output=claude_text,
+            parsed=parsed,
+            attempts=raw.attempts,
+            duration_sec=raw.duration_sec,
+        )
 
     def call_with_file_context(
         self,

@@ -3,12 +3,31 @@
 Stanowy orkiestrator zadań dla Claude Code + Gemini CLI.  
 Automatyzuje pętlę: **architektura → implementacja → review → iteracja → APPROVED**.
 
+### Tryb standardowy
+
 ```
 NEW → ARCHITECTING (Claude) → IMPLEMENTING (Gemini) → REVIEWING (Claude)
                                     ↑                        |
                                     └─── CHANGES_REQUESTED ──┘
                                                              |
                                                         APPROVED / STUCK / FAILED
+```
+
+### Tryb `--human-review`
+
+```
+NEW → ARCHITECTING (Claude) → IMPLEMENTING (Gemini) → AWAITING_HUMAN
+                                    ↑                        |
+                                    │              ┌─────────┴──────────┐
+                                    │           "ok"                  "fail"
+                                    │              │                    │
+                                    │        REVIEWING            HUMAN_FEEDBACK
+                                    │      (Claude: jakość        (Claude: plan
+                                    │        kodu tylko)           naprawy)
+                                    │              │                    │
+                                    └── CHANGES_REQUESTED ─────────────┘
+                                                   |
+                                              APPROVED / STUCK / FAILED
 ```
 
 ---
@@ -36,8 +55,11 @@ python runner.py new "Zrefaktoruj moduł parsera — zamień klasę LegacyParser
 # ✅ Task created: TASK-3A1F2B
 #    Run with: python runner.py run TASK-3A1F2B
 
-# 2. Uruchom orkiestrator
+# 2. Uruchom orkiestrator (tryb standardowy)
 python runner.py run TASK-3A1F2B
+
+# 2b. Uruchom z human-in-the-loop review
+python runner.py run TASK-3A1F2B --human-review
 
 # 3. Sprawdź status (w innym terminalu)
 python monitor.py TASK-3A1F2B
@@ -112,26 +134,49 @@ Gemini otrzymuje:
 - Opis zadania + plan architekta
 - Listę **nieukończonych** kryteriów z poprzedniego review
 - Git diff z poprzedniej iteracji (dla kontekstu delta)
+- (opcjonalnie) **plan naprawy** od Claude'a, gdy poprzednia iteracja skończyła się ludzkim "fail" lub code review z blokerami
 
 Gemini ma **wyraźny nakaz edytowania plików bezpośrednio** narzędziami (nie wypisywania kodu w konsoli) i zapisuje raport postępu do `implementation_report.md` w katalogu głównym projektu.
 
 Po każdej iteracji orkiestrator robi automatyczny `git commit` — dla audytu i izolacji zmian między rundami.
 
-### 3. REVIEWING (Claude)
+### 3a. AWAITING_HUMAN *(tylko `--human-review`)*
 
-Claude otrzymuje:
-- Listę kryteriów do weryfikacji
-- Raport Gemini (`implementation_report.md`)
-- **Pełny diff od początku taska** (`git diff <task_start_sha>..HEAD`) — Claude widzi wszystkie zmiany ze wszystkich iteracji, nie tylko ostatniej
+Orkiestrator pauzuje i czeka na input człowieka:
 
-Claude zwraca **JSON** z oceną każdego kryterium:
-- `status`: `DONE` / `PENDING` / `FAILED`
-- `evidence`: konkretna linijka/funkcja jako dowód
-- `confidence`: `HIGH` / `MEDIUM` / `LOW`
+```
+⏸  HUMAN REVIEW REQUIRED — iter 1
+  Task: TASK-3A1F2B
+  Uruchom aplikację i sprawdź czy działa poprawnie.
+
+  Czy działa poprawnie? [ok / fail]:
+```
+
+- **`ok`** → status przechodzi do `REVIEWING` (Claude sprawdza tylko jakość kodu)
+- **`fail`** → orkiestrator prosi o opis problemu, status przechodzi do `HUMAN_FEEDBACK`
+
+### 3b. HUMAN_FEEDBACK *(tylko `--human-review`)*
+
+Claude dostaje feedback człowieka, aktualny diff i raport Gemini. Zwraca JSON z:
+- `root_cause` — dlaczego zgłoszony problem wystąpił
+- `fix_steps` — konkretne kroki naprawy z plikami
+- `key_fix` — najważniejsza rzecz do poprawy (jednozdaniowe podsumowanie)
+
+Plan naprawy trafia do promptu Gemini w kolejnej iteracji jako blok `🔧 Fix plan`. Stuck counter jest resetowany — ludzki feedback to nowa informacja, nie brak postępu.
+
+### 4. REVIEWING (Claude)
+
+**Tryb standardowy:** Claude weryfikuje każde kryterium akceptacji na podstawie difffa i raportu Gemini. Zwraca ocenę `DONE` / `PENDING` / `FAILED` z konkretnym dowodem.
+
+**Tryb `--human-review`:** Człowiek potwierdził że działa, więc Claude **nie weryfikuje kryteriów funkcjonalnych** — wszystkie są automatycznie oznaczane jako `DONE`. Claude szuka wyłącznie poważnych problemów z jakością kodu: dziur bezpieczeństwa, wycieków zasobów, ryzyka utraty danych, crashów przy normalnym użyciu. Drobne sugestie stylistyczne nie blokują APPROVED.
+
+We wszystkich przypadkach Claude dostaje **pełny diff od początku taska** (`git diff <task_start_sha>..HEAD`).
 
 ### Wykrywanie "stuck"
 
 Stuck detection mierzy diff **bieżącej iteracji** (nie od startu taska) — sprawdza realny postęp Gemini w danej rundzie. Jeśli dwie iteracje z rzędu brak zmian → `STUCK`.
+
+W trybie `--human-review` stuck counter resetuje się po każdym ludzkim "fail" z opisem problemu — nowy feedback to nowy kontekst dla Gemini, nie powtarzający się brak postępu. Blokada następuje tylko gdy Gemini dostaje ten sam feedback wielokrotnie i nic nie zmienia w kodzie.
 
 ---
 
@@ -142,6 +187,8 @@ max_iterations = 6     # maks. iteracji pętli
 max_stuck_rounds = 2   # ile iteracji bez diff zanim STUCK
 min_diff_lines = 1     # min. zmiana linii żeby nie być "stuck"
 ```
+
+W trybie `--human-review` stuck counter resetuje się po każdym ludzkim "fail" — patrz sekcja HUMAN_FEEDBACK powyżej.
 
 Po `STUCK` — sprawdź `runs/TASK-XXXXXX/` ręcznie.  
 Najczęstsze przyczyny: niejasny opis zadania lub zbyt duży zakres.
@@ -203,6 +250,13 @@ Testy nie wymagają połączenia z Claude ani Gemini — agenty są mockowane. 2
 ---
 
 ## Changelog
+
+### v1.2
+- **Feature:** flaga `--human-review` — man-in-the-loop po każdej implementacji Gemini
+- **Feature:** nowa faza `AWAITING_HUMAN` — orkiestrator pauzuje, czeka na input `ok` / `fail`
+- **Feature:** nowa faza `HUMAN_FEEDBACK` — Claude analizuje feedback człowieka i tworzy precyzyjny plan naprawy dla Gemini
+- **Feature:** tryb `--human-review` zmienia rolę Claude w REVIEWING — zamiast weryfikować kryteria funkcjonalne (zatwierdzone przez człowieka), sprawdza wyłącznie jakość kodu
+- **Feature:** stuck counter resetuje się po każdym ludzkim "fail" z opisem
 
 ### v1.1
 - **Fix:** ujednolicono ścieżkę `implementation_report.md` — zawsze w katalogu głównym projektu (wcześniej prompt wskazywał inny katalog niż runner.py szukał)

@@ -3,8 +3,30 @@ config.py — centralna konfiguracja orkiestratora
 """
 
 import os
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
+
+
+def _find_bin(name: str, extra_paths: list[str] = None) -> str:
+    """Szuka binarki w PATH, a potem w znanych lokalizacjach (nvm, local bins)."""
+    found = shutil.which(name)
+    if found:
+        return found
+    candidates = extra_paths or []
+    # Wspólne lokalizacje nvm / npm global dla wszystkich userów w /home
+    home_dirs = list(Path("/home").iterdir()) if Path("/home").exists() else []
+    for home in home_dirs:
+        nvm_base = home / ".nvm" / "versions" / "node"
+        if nvm_base.exists():
+            for node_ver in sorted(nvm_base.iterdir(), reverse=True):
+                candidates.append(str(node_ver / "bin" / name))
+        candidates.append(str(home / ".local" / "bin" / name))
+    candidates += [f"/usr/local/bin/{name}", f"/usr/bin/{name}"]
+    for path in candidates:
+        if Path(path).is_file():
+            return path
+    return name  # fallback — zwróci oryginalną nazwę, subprocess rzuci czytelny błąd
 
 
 @dataclass
@@ -28,11 +50,11 @@ class OrchestratorConfig:
     agent_retry_delay: float = 5.0   # sekundy między retry
 
     # --- Claude Code CLI ---
-    claude_bin: str = "claude"
+    claude_bin: str = field(default_factory=lambda: _find_bin("claude"))
     claude_model: str = "claude-opus-4-5"   # opcjonalnie, jeśli chcesz wymusić model
 
     # --- Gemini CLI ---
-    gemini_bin: str = "gemini"
+    gemini_bin: str = field(default_factory=lambda: _find_bin("gemini"))
     gemini_model: str = "gemini-2.5-pro"
 
     # --- Git ---
@@ -62,3 +84,7 @@ def override_from_env() -> None:
         config.db_path = Path(v)
     if v := os.getenv("ORCH_USE_GIT"):
         config.use_git = v.lower() in ("1", "true", "yes")
+    if v := os.getenv("ORCH_GEMINI_BIN"):
+        config.gemini_bin = v
+    if v := os.getenv("ORCH_CLAUDE_BIN"):
+        config.claude_bin = v

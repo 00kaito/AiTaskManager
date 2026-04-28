@@ -13,6 +13,7 @@ import logging
 import sys
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 from agents import ClaudeAgent, GeminiAgent, GitHelper
@@ -20,6 +21,8 @@ from config import config, override_from_env
 from prompts import (
     architect_prompt,
     build_codebase_summary,
+    code_quality_review_prompt,
+    human_feedback_prompt,
     implement_prompt,
     review_prompt,
 )
@@ -49,19 +52,190 @@ logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────
+# Conversation logger
+# ─────────────────────────────────────────────
+
+class ConversationLogger:
+    """Zapisuje przebieg konwersacji Claude ↔ Gemini do conversation.md."""
+
+    def __init__(self, run_dir: Path, task_id: str, description: str):
+        self.path = run_dir / "conversation.md"
+        if not self.path.exists():
+            self.path.write_text(
+                f"# Conversation Log — {task_id}\n\n"
+                f"**Task:** {description}\n\n"
+                f"---\n\n",
+                encoding="utf-8",
+            )
+
+    def _append(self, text: str) -> None:
+        with self.path.open("a", encoding="utf-8") as f:
+            f.write(text)
+
+    def _ts(self) -> str:
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    def log_architecting(self, data: dict) -> None:
+        plan = data.get("plan", [])
+        criteria = data.get("acceptance_criteria", [])
+        risks = data.get("risks", [])
+
+        plan_lines = "\n".join(
+            f"{s.get('step', i + 1)}. **{s.get('title', '')}** — "
+            f"{s.get('description', '')} `[{s.get('type', '')}]`"
+            for i, s in enumerate(plan)
+        )
+        criteria_lines = "\n".join(
+            f"- `[{c.get('id', '')}]` {c.get('description', '')}  \n"
+            f"  *Verify:* {c.get('how_to_verify', '')}"
+            for c in criteria
+        )
+        risks_lines = "\n".join(f"- {r}" for r in risks) or "*None*"
+
+        self._append(
+            f"## ARCHITECTING — {self._ts()}\n\n"
+            f"### Claude (Architekt)\n\n"
+            f"**Summary:** {data.get('summary', '')}\n\n"
+            f"**Plan:**\n{plan_lines}\n\n"
+            f"**Acceptance Criteria:**\n{criteria_lines}\n\n"
+            f"**Risks:**\n{risks_lines}\n\n"
+            f"---\n\n"
+        )
+
+    def log_implementing(
+        self,
+        iteration: int,
+        open_criteria: list,
+        fix_context: str,
+        diff_stat: str,
+        impl_report: str,
+        gemini_output: str,
+    ) -> None:
+        if fix_context:
+            context_block = f"**Fix context przekazany Gemini:**\n```\n{fix_context}\n```\n\n"
+        elif open_criteria:
+            items = "\n".join(
+                f"- `[{c['id']}]` {c['description']}" for c in open_criteria
+            )
+            context_block = f"**Open criteria do adresowania:**\n{items}\n\n"
+        else:
+            context_block = "*Pierwsza iteracja — implementacja pełnego planu.*\n\n"
+
+        report_block = (
+            impl_report.strip()
+            if impl_report.strip()
+            else "*Brak implementation_report.md.*"
+        )
+
+        gemini_block = ""
+        if gemini_output.strip():
+            snippet = gemini_output[:2000]
+            if len(gemini_output) > 2000:
+                snippet += "\n*(truncated)*"
+            gemini_block = (
+                "<details>\n<summary>Gemini stdout (raw)</summary>\n\n"
+                f"```\n{snippet}\n```\n</details>\n\n"
+            )
+
+        self._append(
+            f"## IMPLEMENTING — iter {iteration} — {self._ts()}\n\n"
+            f"### Gemini (Programista)\n\n"
+            f"{context_block}"
+            f"**Git diff:** {diff_stat}\n\n"
+            f"**Implementation Report:**\n\n{report_block}\n\n"
+            f"{gemini_block}"
+            f"---\n\n"
+        )
+
+    def log_reviewing(self, iteration: int, data: dict, human_review: bool = False) -> None:
+        overall = data.get("overall_status", "?")
+        overall_icon = "✅" if overall == "APPROVED" else "🔄"
+
+        icon = {"DONE": "✅", "PENDING": "⏳", "FAILED": "❌"}
+        criteria_lines = "\n".join(
+            f"- {icon.get(c.get('status', ''), '?')} `[{c.get('id', '')}]` "
+            f"**{c.get('status', '')}** — {c.get('evidence', '')}  \n"
+            f"  *confidence:* {c.get('confidence', '?')}"
+            for c in data.get("criteria_results", [])
+        )
+
+        blocking = data.get("blocking_issues", [])
+        blocking_block = "\n".join(f"- 🚫 {b}" for b in blocking) if blocking else "*None*"
+
+        suggestions = data.get("suggestions", [])
+        suggestions_block = (
+            "\n".join(f"- 💡 {s}" for s in suggestions) if suggestions else "*None*"
+        )
+
+        next_focus = data.get("next_focus", "")
+        mode_note = " *(human-approved — tylko jakość kodu)*" if human_review else ""
+
+        self._append(
+            f"## REVIEWING — iter {iteration} — {self._ts()}{mode_note}\n\n"
+            f"### Claude (Reviewer)\n\n"
+            f"**Overall:** {overall_icon} {overall}\n\n"
+            f"**Criteria:**\n{criteria_lines}\n\n"
+            f"**Blocking issues:**\n{blocking_block}\n\n"
+            f"**Suggestions:**\n{suggestions_block}\n\n"
+            + (f"**Next focus:** {next_focus}\n\n" if next_focus else "")
+            + "---\n\n"
+        )
+
+    def log_awaiting_human(self, iteration: int) -> None:
+        self._append(
+            f"## AWAITING_HUMAN — iter {iteration} — {self._ts()}\n\n"
+            f"*Orkiestrator czeka na decyzję człowieka...*\n\n"
+        )
+
+    def log_human_decision(self, iteration: int, approved: bool, feedback: str = "") -> None:
+        if approved:
+            self._append(
+                f"**Decyzja człowieka:** ✅ OK — implementacja działa poprawnie\n\n"
+                f"---\n\n"
+            )
+        else:
+            self._append(
+                f"**Decyzja człowieka:** ❌ FAIL\n\n"
+                f"**Feedback:** {feedback}\n\n"
+                f"---\n\n"
+            )
+
+    def log_human_feedback(self, iteration: int, data: dict) -> None:
+        fix_steps = data.get("fix_steps", [])
+        steps_lines = "\n".join(
+            f"{s.get('step', i + 1)}. {s.get('description', '')}  \n"
+            f"   *files:* {', '.join(s.get('files_affected', []))}"
+            for i, s in enumerate(fix_steps)
+        )
+
+        self._append(
+            f"## HUMAN_FEEDBACK — iter {iteration} — {self._ts()}\n\n"
+            f"### Claude (Analiza feedbacku → plan naprawy)\n\n"
+            f"**Root cause:** {data.get('root_cause', '')}\n\n"
+            f"**Fix steps:**\n{steps_lines}\n\n"
+            f"**Key fix:** {data.get('key_fix', '')}\n\n"
+            f"---\n\n"
+        )
+
+
+# ─────────────────────────────────────────────
 # Orkiestrator
 # ─────────────────────────────────────────────
 
 class Orchestrator:
-    def __init__(self, project_root: Path = None):
+    def __init__(self, project_root: Path = None, human_review: bool = False):
         # Jeśli nie podano, przyjmij katalog nadrzędny wobec folderu taskmanager
         self.project_root = project_root or config.base_dir.parent
         self.repo = TaskRepository()
         self.claude = ClaudeAgent()
         self.gemini = GeminiAgent()
         self.git = GitHelper(self.project_root) if config.use_git else None
-        
+        self.human_review = human_review
+        self.conv_log: ConversationLogger | None = None
+
         logger.info(f"Project root set to: {self.project_root}")
+        if human_review:
+            logger.info("Human-review mode enabled")
 
     # ── Publiczny entry point ──
 
@@ -85,6 +259,10 @@ class Orchestrator:
         setup_logging(task_id)
         logger.info(f"═══ Starting task {task_id} (status={task.status}) ═══")
 
+        run_dir = config.runs_dir / task_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        self.conv_log = ConversationLogger(run_dir, task_id, task.description)
+
         while task.status not in (
             TaskStatus.APPROVED, TaskStatus.STUCK, TaskStatus.FAILED
         ):
@@ -102,8 +280,12 @@ class Orchestrator:
             return self._architecting(task)
         elif task.status in (TaskStatus.ARCHITECTING, TaskStatus.CHANGES_REQUESTED):
             return self._implementing(task)
-        elif task.status == TaskStatus.IMPLEMENTING:
+        elif task.status in (TaskStatus.IMPLEMENTING, TaskStatus.REVIEWING):
             return self._reviewing(task)
+        elif task.status == TaskStatus.AWAITING_HUMAN:
+            return self._awaiting_human(task)
+        elif task.status == TaskStatus.HUMAN_FEEDBACK:
+            return self._human_feedback(task)
         else:
             logger.error(f"Unexpected status: {task.status}")
             task.status = TaskStatus.FAILED
@@ -156,6 +338,10 @@ class Orchestrator:
             f"Plan created: {len(data.get('plan', []))} steps, "
             f"{len(task.criteria)} criteria"
         )
+
+        if self.conv_log:
+            self.conv_log.log_architecting(data)
+
         task.status = TaskStatus.CHANGES_REQUESTED  # → wejdź w implementing
         return task
 
@@ -174,12 +360,15 @@ class Orchestrator:
             return task
 
         open_criteria = task.open_criteria_list()
+        fix_context = task.fix_plan
+        task.fix_plan = ""  # jednorazowe użycie
         prompt = implement_prompt(
             task_description=task.description,
             architect_plan=task.architect_plan,
             open_criteria=open_criteria,
             previous_diff=task.last_diff,
             iteration=task.iteration,
+            fix_context=fix_context,
         )
 
         run_dir = config.runs_dir / task.task_id
@@ -217,10 +406,138 @@ class Orchestrator:
                     f"[{task.task_id}] iter {task.iteration} — Gemini implementation"
                 )
 
-        task.status = TaskStatus.IMPLEMENTING  # → przejdź do review
+        if self.conv_log:
+            impl_report_path = self.project_root / "implementation_report.md"
+            impl_report = (
+                impl_report_path.read_text(encoding="utf-8")
+                if impl_report_path.exists()
+                else ""
+            )
+            self.conv_log.log_implementing(
+                iteration=task.iteration,
+                open_criteria=open_criteria,
+                fix_context=fix_context,
+                diff_stat=diff_stat,
+                impl_report=impl_report,
+                gemini_output=result.raw_output,
+            )
+
+        if self.human_review:
+            task.status = TaskStatus.AWAITING_HUMAN
+        else:
+            task.status = TaskStatus.IMPLEMENTING  # → przejdź do review
         return task
 
-    # ── FAZA 3: REVIEWING ──
+    # ── FAZA 3a: AWAITING_HUMAN ──
+
+    def _awaiting_human(self, task: Task) -> Task:
+        task.status = TaskStatus.AWAITING_HUMAN
+        self.repo.save(task)
+        self._write_artifacts(task)
+
+        if self.conv_log:
+            self.conv_log.log_awaiting_human(task.iteration)
+
+        print(f"\n{'─'*60}")
+        print(f"  ⏸  HUMAN REVIEW REQUIRED — iter {task.iteration}")
+        print(f"  Task: {task.task_id}")
+        print(f"  Uruchom aplikację i sprawdź czy działa poprawnie.")
+        print(f"{'─'*60}\n")
+
+        while True:
+            answer = input("  Czy działa poprawnie? [ok / fail]: ").strip().lower()
+
+            if answer == "ok":
+                task.human_feedback = ""
+                task.status = TaskStatus.REVIEWING
+                if self.conv_log:
+                    self.conv_log.log_human_decision(task.iteration, approved=True)
+                break
+
+            elif answer == "fail":
+                feedback = input("  Co nie działa? Opisz konkretnie: ").strip()
+                if not feedback:
+                    print("  Podaj opis problemu.")
+                    continue
+                task.human_feedback = feedback
+                task.status = TaskStatus.HUMAN_FEEDBACK
+                if self.conv_log:
+                    self.conv_log.log_human_decision(
+                        task.iteration, approved=False, feedback=feedback
+                    )
+                break
+
+            else:
+                print("  Wpisz 'ok' lub 'fail'.")
+
+        self.repo.save(task)
+        return task
+
+    # ── FAZA 3b: HUMAN_FEEDBACK — Claude analizuje feedback i tworzy plan naprawy ──
+
+    def _human_feedback(self, task: Task) -> Task:
+        logger.info(
+            f"[{task.task_id}] Phase: HUMAN_FEEDBACK (iteration {task.iteration})"
+        )
+
+        impl_report_path = self.project_root / "implementation_report.md"
+        impl_report = ""
+        if impl_report_path.exists():
+            impl_report = impl_report_path.read_text(encoding="utf-8")
+
+        if self.git and task.task_start_sha:
+            diff = self.git.full_diff_from_sha(task.task_start_sha)
+        else:
+            diff = task.last_diff or "(no diff available)"
+
+        prompt = human_feedback_prompt(
+            task_description=task.description,
+            architect_plan=task.architect_plan,
+            human_feedback=task.human_feedback,
+            implementation_report=impl_report,
+            diff=diff,
+            iteration=task.iteration,
+        )
+
+        result = self.claude.call(prompt, expect_json=True)
+        if not result.success:
+            logger.error(f"Claude HUMAN_FEEDBACK failed: {result.error}")
+            task.status = TaskStatus.FAILED
+            return task
+
+        try:
+            fix_data = result.json()
+        except ValueError as e:
+            logger.error(f"HUMAN_FEEDBACK — bad JSON: {e}")
+            task.status = TaskStatus.FAILED
+            return task
+
+        fix_steps = fix_data.get("fix_steps", [])
+        steps_text = "\n".join(
+            f"  {s['step']}. {s['description']} "
+            f"(files: {', '.join(s.get('files_affected', []))})"
+            for s in fix_steps
+        )
+        task.fix_plan = (
+            f"Root cause: {fix_data.get('root_cause', '')}\n\n"
+            f"Fix steps:\n{steps_text}\n\n"
+            f"Key fix: {fix_data.get('key_fix', '')}"
+        )
+
+        # Nowy feedback = nowa informacja → reset stuck counter
+        task.stuck_counter = 0
+        logger.info(
+            f"Fix plan created, stuck_counter reset. "
+            f"Key fix: {fix_data.get('key_fix', '')}"
+        )
+
+        if self.conv_log:
+            self.conv_log.log_human_feedback(task.iteration, fix_data)
+
+        task.status = TaskStatus.CHANGES_REQUESTED
+        return task
+
+    # ── FAZA 4: REVIEWING ──
 
     def _reviewing(self, task: Task) -> Task:
         logger.info(
@@ -241,13 +558,22 @@ class Orchestrator:
         else:
             diff = task.last_diff or "(no diff available)"
 
-        prompt = review_prompt(
-            task_description=task.description,
-            criteria=task.criteria,
-            implementation_report=impl_report,
-            diff=diff,
-            iteration=task.iteration,
-        )
+        if self.human_review:
+            prompt = code_quality_review_prompt(
+                task_description=task.description,
+                criteria=task.criteria,
+                implementation_report=impl_report,
+                diff=diff,
+                iteration=task.iteration,
+            )
+        else:
+            prompt = review_prompt(
+                task_description=task.description,
+                criteria=task.criteria,
+                implementation_report=impl_report,
+                diff=diff,
+                iteration=task.iteration,
+            )
 
         result = self.claude.call(prompt, expect_json=True)
         if not result.success:
@@ -293,9 +619,22 @@ class Orchestrator:
             f"blocking issues: {len(blocking)}"
         )
 
+        if self.conv_log:
+            self.conv_log.log_reviewing(
+                task.iteration, review_data, human_review=self.human_review
+            )
+
         if overall == "APPROVED" and task.all_criteria_done():
             task.status = TaskStatus.APPROVED
         else:
+            # W trybie human_review blocking issues z code review → fix_plan dla Gemini
+            if self.human_review and blocking:
+                next_focus = review_data.get("next_focus", "")
+                task.fix_plan = (
+                    "Code quality issues from review:\n"
+                    + "\n".join(f"- {issue}" for issue in blocking)
+                    + (f"\n\nNext focus: {next_focus}" if next_focus else "")
+                )
             task.status = TaskStatus.CHANGES_REQUESTED
 
         # Zapisz review do pliku
@@ -341,8 +680,8 @@ def cmd_new(description: str) -> None:
     print(f"   Run with: python runner.py run {task.task_id}\n")
 
 
-def cmd_run(task_id: str) -> None:
-    orch = Orchestrator()
+def cmd_run(task_id: str, human_review: bool = False) -> None:
+    orch = Orchestrator(human_review=human_review)
     try:
         task = orch.run(task_id)
     except ValueError as e:
@@ -364,6 +703,39 @@ def cmd_run(task_id: str) -> None:
     elif task.status in (TaskStatus.STUCK, TaskStatus.FAILED):
         print(f"   Open criteria: {[c['id'] for c in task.open_criteria_list()]}")
         print(f"   → Check runs/{task_id}/ for details")
+
+
+def cmd_reset(task_id: str) -> None:
+    repo = TaskRepository()
+    task = repo.load(task_id)
+    if not task:
+        print(f"Task {task_id} not found")
+        sys.exit(1)
+
+    old_status = task.status.value
+    task.status = TaskStatus.NEW
+    task.iteration = 0
+    task.stuck_counter = 0
+    task.criteria = []
+    task.history = []
+    task.architect_plan = ""
+    task.last_diff = ""
+    task.task_start_sha = ""
+    task.human_feedback = ""
+    task.fix_plan = ""
+    repo.save(task)
+
+    # Wyczyść artefakty poza task.md
+    run_dir = config.runs_dir / task_id
+    for f in ("architect_plan.json", "state.json", "conversation.md"):
+        p = run_dir / f
+        if p.exists():
+            p.unlink()
+    for f in run_dir.glob("review_iter_*.json"):
+        f.unlink()
+
+    print(f"\n🔄 Task {task_id} zresetowany: {old_status} → NEW")
+    print(f"   Run with: python runner.py run {task_id}\n")
 
 
 def cmd_status(task_id: str = None) -> None:
@@ -414,17 +786,25 @@ def main() -> None:
         cmd_new(" ".join(args[1:]))
 
     elif cmd == "run":
-        if len(args) < 2:
-            print("Usage: python runner.py run <TASK-ID>")
+        run_args = [a for a in args[1:] if not a.startswith("--")]
+        human_review = "--human-review" in args
+        if not run_args:
+            print("Usage: python runner.py run <TASK-ID> [--human-review]")
             sys.exit(1)
-        cmd_run(args[1])
+        cmd_run(run_args[0], human_review=human_review)
 
     elif cmd == "status":
         cmd_status(args[1] if len(args) > 1 else None)
 
+    elif cmd == "reset":
+        if len(args) < 2:
+            print("Usage: python runner.py reset <TASK-ID>")
+            sys.exit(1)
+        cmd_reset(args[1])
+
     else:
         print(f"Unknown command: {cmd}")
-        print("Commands: new | run | status")
+        print("Commands: new | run | status | reset")
         sys.exit(1)
 
 

@@ -66,6 +66,7 @@ def implement_prompt(
     open_criteria: list[dict],
     previous_diff: str = "",
     iteration: int = 1,
+    fix_context: str = "",
 ) -> str:
     open_block = ""
     if open_criteria:
@@ -76,6 +77,13 @@ def implement_prompt(
 ## ⚠️ Unfinished criteria from previous review
 These were NOT done yet — focus on them:
 {items}
+"""
+
+    fix_block = ""
+    if fix_context:
+        fix_block = f"""
+## 🔧 Fix plan (based on human tester feedback)
+{fix_context}
 """
 
     diff_block = ""
@@ -95,7 +103,7 @@ You are a senior software engineer. Implement the following plan precisely.
 
 ## Implementation plan
 {architect_plan}
-{open_block}{diff_block}
+{fix_block}{open_block}{diff_block}
 ## Instructions
 - You MUST use your file editing tools to directly modify, create, or delete files in the project — do NOT just print code to the console
 - Implement ONLY what is described in the plan — do not refactor unrelated code
@@ -189,6 +197,128 @@ Rules:
 - evidence must reference actual code in the diff or existing files
 - If a criterion cannot be verified from the diff alone, mark it PENDING with evidence="not visible in diff, needs manual check"
 - confidence LOW means you're guessing — flag it
+""".strip()
+
+
+# ─────────────────────────────────────────────
+# FAZA HUMAN_FEEDBACK: analiza feedbacku  →  Claude
+# ─────────────────────────────────────────────
+
+def human_feedback_prompt(
+    task_description: str,
+    architect_plan: str,
+    human_feedback: str,
+    implementation_report: str,
+    diff: str,
+    iteration: int,
+) -> str:
+    return f"""
+You are a senior software architect. A human tester reported that the implementation does not work correctly.
+
+## Original task
+{task_description}
+
+## Original implementation plan
+{architect_plan}
+
+## Human tester's feedback — what doesn't work
+{human_feedback}
+
+## Gemini's implementation report (iteration {iteration})
+{implementation_report}
+
+## Git diff (actual changes)
+```diff
+{diff[:4000]}
+```
+
+## Your job
+Analyze the human's feedback and create a precise, actionable fix plan for the developer (Gemini).
+
+## Your output — respond with ONLY valid JSON, no markdown fences, no explanation
+
+{{
+  "root_cause": "1-2 sentences explaining why the reported issue occurs based on the diff",
+  "fix_steps": [
+    {{
+      "step": 1,
+      "description": "exactly what to change and where — be specific about function names, file paths, logic",
+      "files_affected": ["path/to/file.py"]
+    }}
+  ],
+  "key_fix": "1 sentence — the single most important thing to fix"
+}}
+
+Rules:
+- Be concrete: reference actual function names, line numbers, variable names from the diff
+- Do NOT repeat the original plan steps that were already done correctly
+- Focus only on what's broken according to the human's feedback
+""".strip()
+
+
+# ─────────────────────────────────────────────
+# FAZA REVIEWING (human_review mode)  →  Claude
+# ─────────────────────────────────────────────
+
+def code_quality_review_prompt(
+    task_description: str,
+    criteria: list[dict],
+    implementation_report: str,
+    diff: str,
+    iteration: int,
+) -> str:
+    criteria_json = json.dumps(criteria, ensure_ascii=False, indent=2)
+
+    return f"""
+You are a strict code reviewer. The human tester has already verified that the implementation works correctly.
+Your job is to review CODE QUALITY only — not functional correctness.
+
+## Task
+{task_description}
+
+## Iteration
+{iteration}
+
+## Acceptance criteria (functionally verified by human — mark ALL as DONE)
+{criteria_json}
+
+## Implementation report (from Gemini)
+{implementation_report}
+
+## Git diff (actual changes)
+```diff
+{diff[:6000]}
+```
+
+## Your output — respond with ONLY valid JSON, no markdown fences, no explanation
+
+{{
+  "iteration": {iteration},
+  "overall_status": "APPROVED | CHANGES_REQUESTED",
+  "criteria_results": [
+    {{
+      "id": "c1",
+      "description": "copy from criteria",
+      "status": "DONE",
+      "evidence": "human-verified: functionality confirmed by tester",
+      "confidence": "HIGH"
+    }}
+  ],
+  "blocking_issues": [
+    "serious code quality issue that MUST be fixed (security hole, data corruption risk, resource leak, null pointer crash)"
+  ],
+  "suggestions": [
+    "non-blocking suggestion (readability, edge case handling, etc.)"
+  ],
+  "next_focus": "1-2 sentences telling Gemini exactly what to fix (only if CHANGES_REQUESTED)"
+}}
+
+Rules:
+- Mark ALL acceptance criteria as DONE — human confirmed functionality
+- APPROVED if there are no blocking code quality issues
+- CHANGES_REQUESTED ONLY for serious issues: security vulnerabilities, data loss risk, resource leaks, crashes under normal usage
+- Do NOT request changes for style preferences, minor refactoring, or theoretical edge cases
+- blocking_issues must reference specific file paths and function names from the diff
 """.strip()
 
 
