@@ -284,11 +284,13 @@ class GeminiAgent(BaseAgent):
         self,
         prompt: str,
         cwd: Optional[Path] = None,
+        expect_json: bool = False,
         timeout: Optional[int] = None,
     ) -> AgentResult:
         """
         Wywołuje Gemini CLI z podanym promptem.
-        Gemini CLI nie zwraca JSON — traktujemy output jako tekst.
+        expect_json=False (default): Gemini pisze do plików, output jest surowy.
+        expect_json=True: oczekuj JSON w stdout (np. gdy Gemini pełni rolę architekta/reviewera).
         """
         effective_timeout = timeout or config.gemini_timeout
 
@@ -301,10 +303,23 @@ class GeminiAgent(BaseAgent):
 
         logger.info(
             f"[gemini] Calling Gemini CLI "
-            f"(timeout={effective_timeout}s, cwd={cwd})"
+            f"(timeout={effective_timeout}s, json={expect_json}, cwd={cwd})"
         )
-        # Gemini pisze do plików, nie zwraca JSON
-        return self._call_with_retry(cmd, cwd, effective_timeout, expect_json=False)
+        return self._call_with_retry(cmd, cwd, effective_timeout, expect_json=expect_json)
+
+
+# ─────────────────────────────────────────────
+# Agent factory
+# ─────────────────────────────────────────────
+
+def create_agent(model: str) -> BaseAgent:
+    """Return a ClaudeAgent or GeminiAgent based on model name ('claude' or 'gemini')."""
+    model = model.strip().lower()
+    if model == "claude":
+        return ClaudeAgent()
+    if model == "gemini":
+        return GeminiAgent()
+    raise ValueError(f"Unknown model: {model!r}. Use 'claude' or 'gemini'")
 
 
 # ─────────────────────────────────────────────

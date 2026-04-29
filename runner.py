@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from agents import ClaudeAgent, GeminiAgent, GitHelper
+from agents import ClaudeAgent, GeminiAgent, GitHelper, create_agent
 from config import config, override_from_env
 from prompts import (
     architect_prompt,
@@ -56,14 +56,27 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────
 
 class ConversationLogger:
-    """Zapisuje przebieg konwersacji Claude ↔ Gemini do conversation.md."""
+    """Zapisuje przebieg konwersacji do conversation.md."""
 
-    def __init__(self, run_dir: Path, task_id: str, description: str):
+    def __init__(
+        self,
+        run_dir: Path,
+        task_id: str,
+        description: str,
+        architect_name: str = "Claude",
+        developer_name: str = "Gemini",
+        reviewer_name: str = "Claude",
+    ):
+        self.architect_name = architect_name.capitalize()
+        self.developer_name = developer_name.capitalize()
+        self.reviewer_name = reviewer_name.capitalize()
         self.path = run_dir / "conversation.md"
         if not self.path.exists():
             self.path.write_text(
                 f"# Conversation Log — {task_id}\n\n"
                 f"**Task:** {description}\n\n"
+                f"**Roles:** architect={self.architect_name}, "
+                f"developer={self.developer_name}, reviewer={self.reviewer_name}\n\n"
                 f"---\n\n",
                 encoding="utf-8",
             )
@@ -94,7 +107,7 @@ class ConversationLogger:
 
         self._append(
             f"## ARCHITECTING — {self._ts()}\n\n"
-            f"### Claude (Architekt)\n\n"
+            f"### {self.architect_name} (Architekt)\n\n"
             f"**Summary:** {data.get('summary', '')}\n\n"
             f"**Plan:**\n{plan_lines}\n\n"
             f"**Acceptance Criteria:**\n{criteria_lines}\n\n"
@@ -109,10 +122,10 @@ class ConversationLogger:
         fix_context: str,
         diff_stat: str,
         impl_report: str,
-        gemini_output: str,
+        developer_output: str,
     ) -> None:
         if fix_context:
-            context_block = f"**Fix context przekazany Gemini:**\n```\n{fix_context}\n```\n\n"
+            context_block = f"**Fix context przekazany {self.developer_name}:**\n```\n{fix_context}\n```\n\n"
         elif open_criteria:
             items = "\n".join(
                 f"- `[{c['id']}]` {c['description']}" for c in open_criteria
@@ -127,23 +140,23 @@ class ConversationLogger:
             else "*Brak implementation_report.md.*"
         )
 
-        gemini_block = ""
-        if gemini_output.strip():
-            snippet = gemini_output[:2000]
-            if len(gemini_output) > 2000:
+        developer_block = ""
+        if developer_output.strip():
+            snippet = developer_output[:2000]
+            if len(developer_output) > 2000:
                 snippet += "\n*(truncated)*"
-            gemini_block = (
-                "<details>\n<summary>Gemini stdout (raw)</summary>\n\n"
+            developer_block = (
+                f"<details>\n<summary>{self.developer_name} stdout (raw)</summary>\n\n"
                 f"```\n{snippet}\n```\n</details>\n\n"
             )
 
         self._append(
             f"## IMPLEMENTING — iter {iteration} — {self._ts()}\n\n"
-            f"### Gemini (Programista)\n\n"
+            f"### {self.developer_name} (Programista)\n\n"
             f"{context_block}"
             f"**Git diff:** {diff_stat}\n\n"
             f"**Implementation Report:**\n\n{report_block}\n\n"
-            f"{gemini_block}"
+            f"{developer_block}"
             f"---\n\n"
         )
 
@@ -172,7 +185,7 @@ class ConversationLogger:
 
         self._append(
             f"## REVIEWING — iter {iteration} — {self._ts()}{mode_note}\n\n"
-            f"### Claude (Reviewer)\n\n"
+            f"### {self.reviewer_name} (Reviewer)\n\n"
             f"**Overall:** {overall_icon} {overall}\n\n"
             f"**Criteria:**\n{criteria_lines}\n\n"
             f"**Blocking issues:**\n{blocking_block}\n\n"
@@ -210,7 +223,7 @@ class ConversationLogger:
 
         self._append(
             f"## HUMAN_FEEDBACK — iter {iteration} — {self._ts()}\n\n"
-            f"### Claude (Analiza feedbacku → plan naprawy)\n\n"
+            f"### {self.reviewer_name} (Analiza feedbacku → plan naprawy)\n\n"
             f"**Root cause:** {data.get('root_cause', '')}\n\n"
             f"**Fix steps:**\n{steps_lines}\n\n"
             f"**Key fix:** {data.get('key_fix', '')}\n\n"
@@ -227,13 +240,18 @@ class Orchestrator:
         # Jeśli nie podano, przyjmij katalog nadrzędny wobec folderu taskmanager
         self.project_root = project_root or config.base_dir.parent
         self.repo = TaskRepository()
-        self.claude = ClaudeAgent()
-        self.gemini = GeminiAgent()
+        self.architect = create_agent(config.architect_role)
+        self.developer = create_agent(config.developer_role)
+        self.reviewer = create_agent(config.reviewer_role)
         self.git = GitHelper(self.project_root) if config.use_git else None
         self.human_review = human_review
         self.conv_log: ConversationLogger | None = None
 
-        logger.info(f"Project root set to: {self.project_root}")
+        logger.info(
+            f"Project root set to: {self.project_root} | "
+            f"roles: architect={config.architect_role}, "
+            f"developer={config.developer_role}, reviewer={config.reviewer_role}"
+        )
         if human_review:
             logger.info("Human-review mode enabled")
 
@@ -261,7 +279,12 @@ class Orchestrator:
 
         run_dir = config.runs_dir / task_id
         run_dir.mkdir(parents=True, exist_ok=True)
-        self.conv_log = ConversationLogger(run_dir, task_id, task.description)
+        self.conv_log = ConversationLogger(
+            run_dir, task_id, task.description,
+            architect_name=config.architect_role,
+            developer_name=config.developer_role,
+            reviewer_name=config.reviewer_role,
+        )
 
         while task.status not in (
             TaskStatus.APPROVED, TaskStatus.STUCK, TaskStatus.FAILED
@@ -305,9 +328,9 @@ class Orchestrator:
         codebase = build_codebase_summary(self.project_root)
         prompt = architect_prompt(task.description, codebase)
 
-        result = self.claude.call(prompt, expect_json=True)
+        result = self.architect.call(prompt, expect_json=True)
         if not result.success:
-            logger.error(f"Claude ARCHITECTING failed: {result.error}")
+            logger.error(f"[{config.architect_role}] ARCHITECTING failed: {result.error}")
             task.status = TaskStatus.FAILED
             return task
 
@@ -372,9 +395,9 @@ class Orchestrator:
         )
 
         run_dir = config.runs_dir / task.task_id
-        result = self.gemini.call(prompt, cwd=self.project_root)
+        result = self.developer.call(prompt, cwd=self.project_root, expect_json=False)
         if not result.success:
-            logger.error(f"Gemini IMPLEMENTING failed: {result.error}")
+            logger.error(f"[{config.developer_role}] IMPLEMENTING failed: {result.error}")
             task.status = TaskStatus.FAILED
             return task
 
@@ -403,7 +426,7 @@ class Orchestrator:
             # Auto-commit dla audytu
             if config.use_git:
                 self.git.stage_and_commit(
-                    f"[{task.task_id}] iter {task.iteration} — Gemini implementation"
+                    f"[{task.task_id}] iter {task.iteration} — {config.developer_role} implementation"
                 )
 
         if self.conv_log:
@@ -419,7 +442,7 @@ class Orchestrator:
                 fix_context=fix_context,
                 diff_stat=diff_stat,
                 impl_report=impl_report,
-                gemini_output=result.raw_output,
+                developer_output=result.raw_output,
             )
 
         if self.human_review:
@@ -499,9 +522,9 @@ class Orchestrator:
             iteration=task.iteration,
         )
 
-        result = self.claude.call(prompt, expect_json=True)
+        result = self.reviewer.call(prompt, expect_json=True)
         if not result.success:
-            logger.error(f"Claude HUMAN_FEEDBACK failed: {result.error}")
+            logger.error(f"[{config.reviewer_role}] HUMAN_FEEDBACK failed: {result.error}")
             task.status = TaskStatus.FAILED
             return task
 
@@ -575,9 +598,9 @@ class Orchestrator:
                 iteration=task.iteration,
             )
 
-        result = self.claude.call(prompt, expect_json=True)
+        result = self.reviewer.call(prompt, expect_json=True)
         if not result.success:
-            logger.error(f"Claude REVIEWING failed: {result.error}")
+            logger.error(f"[{config.reviewer_role}] REVIEWING failed: {result.error}")
             task.status = TaskStatus.FAILED
             return task
 
@@ -767,6 +790,17 @@ def cmd_status(task_id: str = None) -> None:
 # Entry point
 # ─────────────────────────────────────────────
 
+def _apply_role_flags(args: list[str]) -> None:
+    """Parse --architect=X --developer=X --reviewer=X flags and update config."""
+    for arg in args:
+        if arg.startswith("--architect="):
+            config.architect_role = arg.split("=", 1)[1]
+        elif arg.startswith("--developer="):
+            config.developer_role = arg.split("=", 1)[1]
+        elif arg.startswith("--reviewer="):
+            config.reviewer_role = arg.split("=", 1)[1]
+
+
 def main() -> None:
     override_from_env()
     config.runs_dir.mkdir(parents=True, exist_ok=True)
@@ -783,13 +817,18 @@ def main() -> None:
         if len(args) < 2:
             print("Usage: python runner.py new '<task description>'")
             sys.exit(1)
-        cmd_new(" ".join(args[1:]))
+        cmd_new(" ".join(a for a in args[1:] if not a.startswith("--")))
 
     elif cmd == "run":
         run_args = [a for a in args[1:] if not a.startswith("--")]
         human_review = "--human-review" in args
+        _apply_role_flags(args)
         if not run_args:
-            print("Usage: python runner.py run <TASK-ID> [--human-review]")
+            print(
+                "Usage: python runner.py run <TASK-ID> [--human-review] "
+                "[--architect=claude|gemini] [--developer=claude|gemini] "
+                "[--reviewer=claude|gemini]"
+            )
             sys.exit(1)
         cmd_run(run_args[0], human_review=human_review)
 

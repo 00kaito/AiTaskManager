@@ -57,6 +57,11 @@ class OrchestratorConfig:
     gemini_bin: str = field(default_factory=lambda: _find_bin("gemini"))
     gemini_model: str = "gemini-2.5-pro"
 
+    # --- Role assignment: "claude" or "gemini" ---
+    architect_role: str = "claude"
+    developer_role: str = "gemini"
+    reviewer_role: str = "claude"
+
     # --- Git ---
     use_git: bool = True             # czy robić git diff między iteracjami
     git_bin: str = "git"
@@ -88,3 +93,9 @@ def override_from_env() -> None:
         config.gemini_bin = v
     if v := os.getenv("ORCH_CLAUDE_BIN"):
         config.claude_bin = v
+    if v := os.getenv("ORCH_ARCHITECT_ROLE"):
+        config.architect_role = v
+    if v := os.getenv("ORCH_DEVELOPER_ROLE"):
+        config.developer_role = v
+    if v := os.getenv("ORCH_REVIEWER_ROLE"):
+        config.reviewer_role = v
