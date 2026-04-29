@@ -4,6 +4,7 @@ config.py — centralna konfiguracja orkiestratora
 
 import os
 import shutil
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -29,12 +30,26 @@ def _find_bin(name: str, extra_paths: list[str] = None) -> str:
     return name  # fallback — zwróci oryginalną nazwę, subprocess rzuci czytelny błąd
 
 
+def _find_project_root() -> Path:
+    """Wykrywa root projektu (git top-level) lub zwraca CWD."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return Path(result.stdout.strip())
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return Path.cwd()
+
+
 @dataclass
 class OrchestratorConfig:
-    # --- Ścieżki (automatycznie wykrywa folder taskmanager) ---
-    base_dir: Path = field(default_factory=lambda: Path(__file__).parent)
-    runs_dir: Path = field(default_factory=lambda: Path(__file__).parent / "runs")
-    db_path: Path = field(default_factory=lambda: Path(__file__).parent / "orchestrator.db")
+    # --- Ścieżki (automatycznie wykrywa root projektu) ---
+    base_dir: Path = field(default_factory=_find_project_root)
+    runs_dir: Path = field(default=None)
+    db_path: Path = field(default=None)
 
     # --- Limity pętli ---
     max_iterations: int = 6          # max rund IMPLEMENTING → REVIEWING
@@ -60,7 +75,7 @@ class OrchestratorConfig:
     # --- Role assignment: "claude" or "gemini" ---
     architect_role: str = "claude"
     developer_role: str = "gemini"
-    reviewer_role: str = "claude"
+    reviewer_role: str = "gemini"
 
     # --- Git ---
     use_git: bool = True             # czy robić git diff między iteracjami
@@ -69,6 +84,13 @@ class OrchestratorConfig:
     # --- Logowanie ---
     log_level: str = "INFO"          # DEBUG | INFO | WARNING | ERROR
     log_to_file: bool = True
+
+    def __post_init__(self):
+        """Inicjalizuje ścieżki zależne od base_dir."""
+        if self.runs_dir is None:
+            self.runs_dir = self.base_dir / ".orchestrator" / "runs"
+        if self.db_path is None:
+            self.db_path = self.base_dir / ".orchestrator" / "orchestrator.db"
 
 
 # Singleton – importuj tę instancję wszędzie

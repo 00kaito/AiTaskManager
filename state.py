@@ -140,6 +140,8 @@ class TaskRepository:
             conn.close()
 
     def _init_db(self) -> None:
+        # Upewnij się, że katalog dla bazy danych (.orchestrator) istnieje
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._conn() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS tasks (

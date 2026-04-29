@@ -2,10 +2,10 @@
 runner.py — główna pętla orkiestratora
 
 Użycie:
-    python runner.py new "Zrefaktoruj moduł parsera do nowej architektury"
-    python runner.py run TASK-001
-    python runner.py status
-    python runner.py status TASK-001
+    orch new "Zrefaktoruj moduł parsera do nowej architektury"
+    orch run TASK-001
+    orch status
+    orch status TASK-001
 """
 
 import json
@@ -237,8 +237,8 @@ class ConversationLogger:
 
 class Orchestrator:
     def __init__(self, project_root: Path = None, human_review: bool = False):
-        # Jeśli nie podano, przyjmij katalog nadrzędny wobec folderu taskmanager
-        self.project_root = project_root or config.base_dir.parent
+        # Jeśli nie podano, przyjmij wykryty root projektu (git root lub CWD)
+        self.project_root = project_root or config.base_dir
         self.repo = TaskRepository()
         self.architect = create_agent(config.architect_role)
         self.developer = create_agent(config.developer_role)
@@ -700,7 +700,7 @@ def cmd_new(description: str) -> None:
     orch = Orchestrator()
     task = orch.create_task(description)
     print(f"\n✅ Task created: {task.task_id}")
-    print(f"   Run with: python runner.py run {task.task_id}\n")
+    print(f"   Run with: orch run {task.task_id}\n")
 
 
 def cmd_run(task_id: str, human_review: bool = False) -> None:
@@ -758,7 +758,7 @@ def cmd_reset(task_id: str) -> None:
         f.unlink()
 
     print(f"\n🔄 Task {task_id} zresetowany: {old_status} → NEW")
-    print(f"   Run with: python runner.py run {task_id}\n")
+    print(f"   Run with: orch run {task_id}\n")
 
 
 def cmd_status(task_id: str = None) -> None:
@@ -815,7 +815,7 @@ def main() -> None:
 
     if cmd == "new":
         if len(args) < 2:
-            print("Usage: python runner.py new '<task description>'")
+            print("Usage: orch new '<task description>'")
             sys.exit(1)
         cmd_new(" ".join(a for a in args[1:] if not a.startswith("--")))
 
@@ -825,7 +825,7 @@ def main() -> None:
         _apply_role_flags(args)
         if not run_args:
             print(
-                "Usage: python runner.py run <TASK-ID> [--human-review] "
+                "Usage: orch run <TASK-ID> [--human-review] "
                 "[--architect=claude|gemini] [--developer=claude|gemini] "
                 "[--reviewer=claude|gemini]"
             )
@@ -837,7 +837,7 @@ def main() -> None:
 
     elif cmd == "reset":
         if len(args) < 2:
-            print("Usage: python runner.py reset <TASK-ID>")
+            print("Usage: orch reset <TASK-ID>")
             sys.exit(1)
         cmd_reset(args[1])
 
