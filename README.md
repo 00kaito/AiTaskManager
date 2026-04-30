@@ -1,15 +1,25 @@
-# AI Task Orchestrator
+# AI Task Orchestrator (v2.0)
 
-Stanowy orkiestrator zadań dla Claude Code + Gemini CLI.  
-Automatyzuje pętlę: **architektura → implementacja → review → iteracja → APPROVED**.
+Stanowy orkiestrator zadań współpracujący z **Claude Code** oraz **Gemini CLI**.  
+Automatyzuje pełny cykl wytwórczy: **Architektura → Implementacja → Review → Iteracja → Sukces**.
 
-Orkiestrator jest teraz **niezależny od projektu** — możesz go zainstalować raz i używać w dowolnym repozytorium git lub katalogu.
+Narzędzie jest **całkowicie niezależne od projektu** — instalujesz je raz i używasz w dowolnym repozytorium lub katalogu.
+
+---
+
+## Jak to działa?
+
+Orkiestrator zarządza trzema wyspecjalizowanymi rolami agentów AI:
+
+1.  **Architekt (Claude)**: Analizuje codebase, tworzy szczegółowy plan zmian w formacie JSON oraz definiuje weryfikowalne kryteria akceptacji.
+2.  **Programista (Gemini)**: Otrzymuje plan i modyfikuje pliki projektu. Gemini ma uprawnienia do edycji kodu, tworzenia nowych plików i usuwania starych. Po każdej iteracji tworzy `implementation_report.md`.
+3.  **Reviewer (Claude)**: Sprawdza diff zmian względem kryteriów akceptacji. Jeśli wszystko jest gotowe — zatwierdza (`APPROVED`). Jeśli nie — zwraca zadanie do poprawki (`CHANGES_REQUESTED`) z konkretnymi uwagami.
 
 ---
 
 ## Instalacja
 
-Aby móc używać orkiestratora globalnie:
+Aby używać orkiestratora jako globalnej komendy systemowej:
 
 1. Sklonuj to repozytorium.
 2. Zainstaluj pakiet w trybie edytowalnym (wymaga Python 3.11+):
@@ -22,116 +32,80 @@ Aby móc używać orkiestratora globalnie:
 
 ## Szybki start
 
-1. Wejdź do katalogu swojego projektu (najlepiej repozytorium git).
-2. Zainicjuj nowe zadanie:
-   ```bash
-   orch new "Opisz co agent ma zrobić"
-   ```
-   Orkiestrator utworzy katalog `.orchestrator/` w root projektu (wykrytym przez git lub CWD), gdzie będzie trzymał bazę danych i logi. 
-   **Pamiętaj, aby dodać `.orchestrator/` do swojego `.gitignore`.**
+1.  **Wejdź do katalogu swojego projektu** (najlepiej repozytorium git).
+2.  **Zainicjuj zadanie**:
+    ```bash
+    orch new "Zrefaktoruj parser w src/parser.py na podejście funkcyjne i dodaj testy"
+    ```
+    Orkiestrator automatycznie wykryje root projektu (przez Git lub CWD) i utworzy katalog `.orchestrator/` na dane. 
+    *Wskazówka: Dodaj `.orchestrator/` do swojego `.gitignore`.*
 
-3. Uruchom zadanie:
-   ```bash
-   orch run TASK-XXXXXX
-   ```
+3.  **Uruchom proces**:
+    ```bash
+    orch run TASK-XXXXXX
+    ```
 
-4. (Opcjonalnie) Śledź postęp w osobnym terminalu:
-   ```bash
-   orch-monitor
-   ```
+4.  **Monitoruj postęp**:
+    W osobnym terminalu wpisz `orch-monitor`, aby widzieć status zadań na żywo.
 
 ---
 
-## Tryby pracy
+## Główne funkcje
 
-### Tryb standardowy
+### 🧠 Inteligentne wykrywanie root projektu
+Orkiestrator automatycznie lokalizuje główny katalog projektu za pomocą `git rev-parse --show-toplevel`. Dzięki temu możesz wywoływać komendy z dowolnego podkatalogu, a dane zawsze trafią do wspólnego folderu `.orchestrator/` w korzeniu projektu.
 
-```
-NEW → ARCHITECTING (Claude) → IMPLEMENTING (Gemini) → REVIEWING (Claude)
-                                    ↑                        |
-                                    └─── CHANGES_REQUESTED ──┘
-                                                             |
-                                                        APPROVED / STUCK / FAILED
-```
-
-### Tryb `--human-review`
-
-Zatrzymuje się po każdej implementacji, abyś mógł ręcznie przetestować kod.
-
+### 👤 Human-in-the-loop (`--human-review`)
+Jeśli chcesz mieć pełną kontrolę, uruchom:
 ```bash
 orch run TASK-XXXXXX --human-review
 ```
+Orkiestrator zatrzyma się po każdej implementacji Gemini i zapyta Cię, czy rozwiązanie działa. Możesz wtedy ręcznie przetestować kod. Jeśli powiesz `fail`, Claude przeanalizuje Twój feedback i przygotuje plan naprawy dla Gemini.
+
+### 📜 Historia i audyt (Git)
+Jeśli projekt jest repozytorium Git, orkiestrator po każdej iteracji robi automatyczny commit z opisem. Pozwala to na łatwy powrót do dowolnego etapu pracy agenta.
 
 ---
 
-## Użycie CLI
+## Komendy CLI
 
-### Tworzenie zadania
-```bash
-orch new "Zrefaktoruj moduł parsera — zamień klasę LegacyParser na funkcję parse_v2..."
-```
-
-### Status zadań
-```bash
-orch status         # Lista wszystkich zadań w aktualnym projekcie
-orch status TASK-ID # Szczegóły konkretnego zadania
-```
-
-### Resetowanie zadania
-Jeśli chcesz zacząć od nowa (np. po zmianie opisu):
-```bash
-orch reset TASK-ID
-```
-
-### Nadpisanie roli agenta
-```bash
-orch run TASK-ID --architect=gemini --developer=claude
-```
+| Komenda | Opis |
+|:---|:---|
+| `orch new "opis"` | Tworzy nowe zadanie i nadaje mu ID. |
+| `orch run ID` | Uruchamia pętlę agentów dla danego zadania. |
+| `orch run ID --human-review` | Uruchamia zadanie z Twoją weryfikacją po drodze. |
+| `orch status` | Wyświetla listę zadań w aktualnym projekcie. |
+| `orch status ID` | Wyświetla szczegółowy status i historię konkretnego zadania. |
+| `orch reset ID` | Czyści historię i przywraca zadanie do stanu NEW (zachowując opis). |
+| `orch-monitor` | Otwiera terminalowy dashboard (Live View). |
 
 ---
 
 ## Struktura danych (.orchestrator/)
 
-W każdym projekcie, w którym użyjesz orkiestratora, powstanie katalog:
+W każdym projekcie powstaje izolowany katalog z danymi:
 ```
 .orchestrator/
-├── orchestrator.db     ← baza SQLite dla tego projektu
-└── runs/
+├── orchestrator.db     ← Baza SQLite (zadania, historia, statusy)
+└── runs/               ← Logi i artefakty per-zadanie
     └── TASK-XXXXXX/
-        ├── conversation.md    ← zapis "myśli" agentów
-        ├── state.json         ← stan maszyny stanów
+        ├── conversation.md    ← Pełny zapis "myśli" i decyzji agentów
+        ├── state.json         ← Stan maszyny stanów
         ├── architect_plan.json
         └── review_iter_N.json
 ```
 
 ---
 
-## Konfiguracja
+## Konfiguracja (Zmienne Env)
 
-Możesz użyć zmiennych środowiskowych, aby zmienić zachowanie orkiestratora:
+Możesz nadpisać domyślne ustawienia:
+- `ORCH_MAX_ITERATIONS`: Limit rund (domyślnie 6).
+- `ORCH_ARCHITECT_ROLE`: Model dla architekta (`claude` | `gemini`).
+- `ORCH_DEVELOPER_ROLE`: Model dla programisty (`claude` | `gemini`).
+- `ORCH_USE_GIT`: Czy robić automatyczne commity (domyślnie true).
 
-| Zmienna env              | Domyślna wartość | Opis                                    |
-|--------------------------|------------------|-----------------------------------------|
-| `ORCH_MAX_ITERATIONS`    | `6`              | Maks. rund przed STUCK                  |
-| `ORCH_USE_GIT`           | `true`           | Czy robić git diff i auto-commity       |
-| `ORCH_ARCHITECT_ROLE`    | `claude`         | Model dla architektury                  |
-| `ORCH_DEVELOPER_ROLE`    | `gemini`         | Model dla implementacji                 |
-
----
-
-## Testy
-
+Przykład:
 ```bash
-pytest test_orchestrator.py -v
+ORCH_MAX_ITERATIONS=3 orch run TASK-XXXXXX
 ```
-Testy używają mocków, nie wymagają kluczy API.
-
----
-
-## Changelog (v2.0)
-
-- **Feature:** Całkowita niezależność od projektu — instalacja przez `pip install -e .`.
-- **Feature:** Automatyczne wykrywanie root projektu przez git (`git rev-parse --show-toplevel`).
-- **Feature:** Przechowywanie danych w ukrytym katalogu `.orchestrator/` wewnątrz projektu.
-- **Feature:** Nowe komendy CLI: `orch` oraz `orch-monitor`.
-- **Improvement:** Uproszczone zarządzanie ścieżkami w `config.py`.
