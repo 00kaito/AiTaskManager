@@ -17,16 +17,34 @@ Orkiestrator zarządza trzema wyspecjalizowanymi rolami agentów AI:
 
 ---
 
-## Instalacja
+## Instalacja (Profesjonalna i bezpieczna)
 
-Aby używać orkiestratora jako globalnej komendy systemowej:
+Zalecaną metodą instalacji narzędzi CLI jest izolacja ich w osobnym środowisku wirtualnym, aby uniknąć konfliktów z pakietami systemowymi (błąd `externally-managed-environment`).
 
-1. Sklonuj to repozytorium.
-2. Zainstaluj pakiet w trybie edytowalnym (wymaga Python 3.11+):
+### Metoda 1: Automatyczna (przez pipx)
+Najbezpieczniejszy standard dla narzędzi CLI. Instaluje aplikację w odizolowanym środowisku i automatycznie tworzy dowiązania (symlinks).
+```bash
+pipx install .
+```
+*(Jeśli nie masz pipx: `sudo apt install pipx && pipx ensurepath`)*
+
+### Metoda 2: Manualna (Venv + Symlink)
+Jeśli wolisz pełną kontrolę bez dodatkowych narzędzi:
+
+1. **Utwórz izolowane środowisko** wewnątrz katalogu orkiestratora:
    ```bash
-   pip install -e .
+   python3 -m venv venv
+   ./venv/bin/pip install .
    ```
-   To doda komendy `orch` oraz `orch-monitor` do Twojego systemu.
+
+2. **Utwórz dowiązania symboliczne** w swoim lokalnym folderze binarnym:
+   ```bash
+   mkdir -p ~/.local/bin
+   ln -s $(pwd)/venv/bin/orch ~/.local/bin/orch
+   ln -s $(pwd)/venv/bin/orch-monitor ~/.local/bin/orch-monitor
+   ```
+
+Po wykonaniu jednej z powyższych metod, komendy `orch` oraz `orch-monitor` będą dostępne globalnie, nie narażając stabilności systemu.
 
 ---
 
