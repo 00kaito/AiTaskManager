@@ -57,6 +57,47 @@ Rules for acceptance_criteria:
 
 
 # ─────────────────────────────────────────────
+# FAZA 1b: ANALYZING  →  Gemini
+# ─────────────────────────────────────────────
+
+def analyze_prompt(task_description: str, architect_plan: str, codebase_summary: str) -> str:
+    return f"""
+You are a senior software code analyst. The architect has created a high-level plan for a task.
+Your job is to deeply analyze the codebase and enrich the plan with precise code-level details.
+
+## Task
+{task_description}
+
+## High-level Architect Plan
+{architect_plan}
+
+## Codebase Context
+{codebase_summary}
+
+## Instructions
+1. DO NOT modify any files in the project. Your job is ONLY to research and output JSON.
+2. Use your search tools to find the exact files, classes, methods, and functions needed to implement the plan.
+3. For each step in the plan, determine the specific `symbols_affected` and provide deep `code_hints` for the developer.
+4. Respond ONLY with the updated plan in JSON format. Do not use markdown fences.
+
+## Expected JSON Output
+{{
+  "plan": [
+    {{
+      "step": 1,
+      "title": "short title",
+      "description": "what exactly needs to be done",
+      "files_affected": ["path/to/file.py"],
+      "symbols_affected": ["ClassName", "function_name"],
+      "code_hints": "Important details: which method to call, data flow, potential gotchas.",
+      "type": "CREATE | MODIFY | DELETE"
+    }}
+  ]
+}}
+""".strip()
+
+
+# ─────────────────────────────────────────────
 # FAZA 2: IMPLEMENTING  →  Gemini
 # ─────────────────────────────────────────────
 

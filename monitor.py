@@ -33,6 +33,7 @@ REFRESH_INTERVAL = 3  # sekundy
 STATUS_COLORS = {
     TaskStatus.NEW: "dim white",
     TaskStatus.ARCHITECTING: "cyan",
+    TaskStatus.ANALYZING: "magenta",
     TaskStatus.IMPLEMENTING: "yellow",
     TaskStatus.REVIEWING: "blue",
     TaskStatus.CHANGES_REQUESTED: "orange3",
@@ -44,6 +45,7 @@ STATUS_COLORS = {
 STATUS_ICONS = {
     TaskStatus.NEW: "○",
     TaskStatus.ARCHITECTING: "◈",
+    TaskStatus.ANALYZING: "▤",
     TaskStatus.IMPLEMENTING: "◆",
     TaskStatus.REVIEWING: "◇",
     TaskStatus.CHANGES_REQUESTED: "↻",
@@ -72,6 +74,7 @@ def build_table(repo: TaskRepository, filter_id: str = None):
     )
 
     table.add_column("ID", style="bold", min_width=12)
+    table.add_column("Title", min_width=30)
     table.add_column("Status", min_width=20)
     table.add_column("Iter", justify="center", min_width=5)
     table.add_column("Criteria", justify="center", min_width=10)
@@ -87,6 +90,8 @@ def build_table(repo: TaskRepository, filter_id: str = None):
         icon = STATUS_ICONS.get(t.status, "?")
         status_text = Text(f"{icon}  {t.status.value}", style=color)
 
+        title = t.title[:30] + "..." if len(t.title) > 30 else t.title
+
         last_note = "—"
         if t.history:
             last_note = t.history[-1].get("notes", "") or "—"
@@ -98,6 +103,7 @@ def build_table(repo: TaskRepository, filter_id: str = None):
 
         table.add_row(
             t.task_id,
+            title,
             status_text,
             str(t.iteration),
             crit_str,
@@ -197,11 +203,11 @@ def run_plain(filter_id: str = None, once: bool = False):
         if filter_id:
             tasks = [t for t in tasks if t.task_id == filter_id]
 
-        print(f"\n{'─'*70}")
+        print(f"\n{'─'*100}")
         print(f"  AI Orchestrator Monitor  {time.strftime('%H:%M:%S')}")
-        print(f"{'─'*70}")
-        print(f"  {'ID':<14} {'STATUS':<22} {'ITER':<5} {'CRIT':<8} {'STUCK'}")
-        print(f"  {'─'*13} {'─'*21} {'─'*4} {'─'*7} {'─'*5}")
+        print(f"{'─'*100}")
+        print(f"  {'ID':<14} {'TITLE':<32} {'STATUS':<22} {'ITER':<5} {'CRIT':<8} {'STUCK'}")
+        print(f"  {'─'*13} {'─'*31} {'─'*21} {'─'*4} {'─'*7} {'─'*5}")
 
         for t in tasks:
             done = sum(1 for c in t.criteria if c["status"] == "DONE")
@@ -209,8 +215,9 @@ def run_plain(filter_id: str = None, once: bool = False):
             crit_str = f"{done}/{total}" if total else "—"
             icon = STATUS_ICONS.get(t.status, "?")
             stuck = str(t.stuck_counter) if t.stuck_counter else "—"
+            title = t.title[:30] + "..." if len(t.title) > 30 else t.title
             print(
-                f"  {t.task_id:<14} {icon} {t.status.value:<20} "
+                f"  {t.task_id:<14} {title:<32} {icon} {t.status.value:<20} "
                 f"{t.iteration:<5} {crit_str:<8} {stuck}"
             )
 

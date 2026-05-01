@@ -115,6 +115,24 @@ class ConversationLogger:
             f"---\n\n"
         )
 
+    def log_analyzing(self, data: dict) -> None:
+        plan = data.get("plan", [])
+
+        plan_lines = "\n".join(
+            f"{s.get('step', i + 1)}. **{s.get('title', '')}** — "
+            f"{s.get('description', '')} `[{s.get('type', '')}]`  \n"
+            f"   *Symbols:* `{', '.join(s.get('symbols_affected', []))}`  \n"
+            f"   *Hints:* {s.get('code_hints', '')}"
+            for i, s in enumerate(plan)
+        )
+
+        self._append(
+            f"## ANALYZING — {self._ts()}\n\n"
+            f"### Gemini (Analityk Kodu)\n\n"
+            f"**Enriched Plan:**\n\n{plan_lines}\n\n"
+            f"---\n\n"
+        )
+
     def log_implementing(
         self,
         iteration: int,
@@ -241,6 +259,7 @@ class Orchestrator:
         self.project_root = project_root or config.base_dir
         self.repo = TaskRepository()
         self.architect = create_agent(config.architect_role)
+        self.analyzer = create_agent(config.analyzer_role)
         self.developer = create_agent(config.developer_role)
         self.reviewer = create_agent(config.reviewer_role)
         self.git = GitHelper(self.project_root) if config.use_git else None
@@ -259,14 +278,17 @@ class Orchestrator:
 
     def create_task(self, description: str) -> Task:
         task_id = f"TASK-{uuid.uuid4().hex[:6].upper()}"
-        task = Task(task_id=task_id, description=description)
+        # Wyciągnij pierwsze 100 znaków pierwszej linii jako tytuł
+        first_line = description.split("\n")[0].strip()
+        title = first_line[:100]
+        task = Task(task_id=task_id, description=description, title=title)
         self.repo.save(task)
         run_dir = config.runs_dir / task_id
         run_dir.mkdir(parents=True, exist_ok=True)
         (run_dir / "task.md").write_text(
-            f"# Task: {task_id}\n\n{description}\n", encoding="utf-8"
+            f"# Task: {task_id}\n\n## Title: {title}\n\n{description}\n", encoding="utf-8"
         )
-        logger.info(f"Created task {task_id}")
+        logger.info(f"Created task {task_id} with title: {title}")
         return task
 
     def run(self, task_id: str) -> Task:
@@ -286,6 +308,18 @@ class Orchestrator:
             reviewer_name=config.reviewer_role,
         )
 
+        # Jeśli startujemy z feedbackiem (np. po orch follow), zaloguj go od razu
+        if task.status == TaskStatus.HUMAN_FEEDBACK and task.human_feedback:
+            # Tworzymy sztuczną strukturę dla loggera, żeby wiedział co zapisać
+            fake_data = {
+                "root_cause": "Follow-up request initiated by user",
+                "fix_steps": [{"step": 1, "description": task.human_feedback, "files_affected": []}],
+                "key_fix": task.human_feedback
+            }
+            # Logujemy to jako HUMAN_FEEDBACK w konwersacji
+            self.conv_log._append(f"## FOLLOW-UP INITIATED — {self.conv_log._ts()}\n\n")
+            self.conv_log._append(f"**User instruction:** {task.human_feedback}\n\n---\n\n")
+
         while task.status not in (
             TaskStatus.APPROVED, TaskStatus.STUCK, TaskStatus.FAILED
         ):
@@ -301,7 +335,9 @@ class Orchestrator:
     def _step(self, task: Task) -> Task:
         if task.status == TaskStatus.NEW:
             return self._architecting(task)
-        elif task.status in (TaskStatus.ARCHITECTING, TaskStatus.CHANGES_REQUESTED):
+        elif task.status == TaskStatus.ARCHITECTING:
+            return self._analyzing(task)
+        elif task.status in (TaskStatus.ANALYZING, TaskStatus.CHANGES_REQUESTED):
             return self._implementing(task)
         elif task.status in (TaskStatus.IMPLEMENTING, TaskStatus.REVIEWING):
             return self._reviewing(task)
@@ -365,7 +401,43 @@ class Orchestrator:
         if self.conv_log:
             self.conv_log.log_architecting(data)
 
-        task.status = TaskStatus.CHANGES_REQUESTED  # → wejdź w implementing
+        task.status = TaskStatus.ANALYZING  # → wejdź w analyzing
+        return task
+
+    # ── FAZA 1b: ANALYZING — Gemini bada kod i wzbogaca plan ──
+
+    def _analyzing(self, task: Task) -> Task:
+        logger.info(f"[{task.task_id}] Phase: ANALYZING")
+
+        codebase = build_codebase_summary(self.project_root)
+        from prompts import analyze_prompt
+        prompt = analyze_prompt(task.description, task.architect_plan, codebase)
+
+        result = self.analyzer.call(prompt, cwd=self.project_root, expect_json=True)
+        if not result.success:
+            logger.error(f"[{config.analyzer_role}] ANALYZING failed: {result.error}")
+            task.status = TaskStatus.FAILED
+            return task
+
+        try:
+            data = result.json()
+        except ValueError as e:
+            logger.error(f"ANALYZING — bad JSON: {e}")
+            task.status = TaskStatus.FAILED
+            return task
+
+        # Nadpisz plan nowym (wzbogaconym)
+        try:
+            old_data = json.loads(task.architect_plan)
+            old_data["plan"] = data.get("plan", [])
+            task.architect_plan = json.dumps(old_data, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning(f"Could not merge enriched plan: {e}")
+
+        if self.conv_log:
+            self.conv_log.log_analyzing(data)
+
+        task.status = TaskStatus.IMPLEMENTING
         return task
 
     # ── FAZA 2: IMPLEMENTING ──
@@ -761,6 +833,23 @@ def cmd_reset(task_id: str) -> None:
     print(f"   Run with: orch run {task_id}\n")
 
 
+def cmd_follow(task_id: str, feedback: str) -> None:
+    repo = TaskRepository()
+    task = repo.load(task_id)
+    if not task:
+        print(f"Task {task_id} not found")
+        sys.exit(1)
+
+    task.human_feedback = f"Follow-up request: {feedback}"
+    task.status = TaskStatus.HUMAN_FEEDBACK
+    task.stuck_counter = 0
+    repo.save(task)
+
+    print(f"\n✅ Task {task_id} wznowiony jako kontynuacja (status: HUMAN_FEEDBACK)")
+    print(f"   Dodano polecenie: {feedback}")
+    print(f"   Run with: orch run {task_id}\n")
+
+
 def cmd_status(task_id: str = None) -> None:
     repo = TaskRepository()
     if task_id:
@@ -776,13 +865,14 @@ def cmd_status(task_id: str = None) -> None:
         print("No tasks found.")
         return
 
-    print(f"\n{'ID':<15} {'STATUS':<22} {'ITER':<6} {'CRITERIA':<12}")
-    print("─" * 60)
+    print(f"\n{'ID':<15} {'TITLE':<42} {'STATUS':<22} {'ITER':<6} {'CRITERIA':<12}")
+    print("─" * 105)
     for t in tasks:
         done = sum(1 for c in t.criteria if c["status"] == "DONE")
         total = len(t.criteria)
         crit_str = f"{done}/{total}" if total else "—"
-        print(f"{t.task_id:<15} {t.status.value:<22} {t.iteration:<6} {crit_str:<12}")
+        title = t.title[:40] + "..." if len(t.title) > 40 else t.title
+        print(f"{t.task_id:<15} {title:<42} {t.status.value:<22} {t.iteration:<6} {crit_str:<12}")
     print()
 
 
@@ -841,9 +931,15 @@ def main() -> None:
             sys.exit(1)
         cmd_reset(args[1])
 
+    elif cmd == "follow":
+        if len(args) < 3:
+            print("Usage: orch follow <TASK-ID> '<feedback/instructions>'")
+            sys.exit(1)
+        cmd_follow(args[1], " ".join(args[2:]))
+
     else:
         print(f"Unknown command: {cmd}")
-        print("Commands: new | run | status | reset")
+        print("Commands: new | run | status | reset | follow")
         sys.exit(1)
 
 

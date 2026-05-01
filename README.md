@@ -92,10 +92,22 @@ Jeśli projekt jest repozytorium Git, orkiestrator po każdej iteracji robi auto
 | `orch new "opis"` | Tworzy nowe zadanie i nadaje mu ID. |
 | `orch run ID` | Uruchamia pętlę agentów dla danego zadania. |
 | `orch run ID --human-review` | Uruchamia zadanie z Twoją weryfikacją po drodze. |
+| `orch follow ID "opis"`| Kontynuacja zakończonego zadania (dodaje nowe instrukcje). |
 | `orch status` | Wyświetla listę zadań w aktualnym projekcie. |
 | `orch status ID` | Wyświetla szczegółowy status i historię konkretnego zadania. |
 | `orch reset ID` | Czyści historię i przywraca zadanie do stanu NEW (zachowując opis). |
 | `orch-monitor` | Otwiera terminalowy dashboard (Live View). |
+
+### Kontynuacja zadania (Follow-up)
+Jeśli zadanie jest zakończone, ale chcesz coś zmienić lub dodać w oparciu o to, co już zostało zrobione:
+```bash
+# Dodaj nowe instrukcje do istniejącego zadania
+orch follow TASK-XXXXXX "Dopisz jeszcze testy jednostkowe dla nowej funkcji"
+
+# Uruchom ponownie - Claude przeanalizuje feedback i Gemini dokończy pracę
+orch run TASK-XXXXXX
+```
+Orkiestrator wykorzysta pełną historię zadania (plan architekta, poprzednie raporty i diffy), aby płynnie kontynuować pracę.
 
 ---
 

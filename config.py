@@ -74,8 +74,10 @@ class OrchestratorConfig:
 
     # --- Role assignment: "claude" or "gemini" ---
     architect_role: str = "claude"
+    analyzer_role: str = "gemini"
     developer_role: str = "gemini"
     reviewer_role: str = "gemini"
+
 
     # --- Git ---
     use_git: bool = True             # czy robić git diff między iteracjami

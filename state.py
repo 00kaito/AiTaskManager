@@ -21,6 +21,7 @@ from config import config
 class TaskStatus(str, Enum):
     NEW = "NEW"
     ARCHITECTING = "ARCHITECTING"
+    ANALYZING = "ANALYZING"
     IMPLEMENTING = "IMPLEMENTING"
     AWAITING_HUMAN = "AWAITING_HUMAN"
     HUMAN_FEEDBACK = "HUMAN_FEEDBACK"
@@ -80,6 +81,7 @@ class IterationRecord:
 class Task:
     task_id: str
     description: str
+    title: str = ""
     status: TaskStatus = TaskStatus.NEW
     iteration: int = 0
     max_iterations: int = field(default_factory=lambda: config.max_iterations)
@@ -114,6 +116,10 @@ class Task:
         d["status"] = TaskStatus(d["status"])
         d.setdefault("human_feedback", "")
         d.setdefault("fix_plan", "")
+        if "title" not in d:
+            # Fallback dla starych zadań
+            first_line = d.get("description", "").split("\n")[0]
+            d["title"] = first_line[:100]
         return Task(**d)
 
 

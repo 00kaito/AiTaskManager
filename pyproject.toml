@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "taskmanager-orchestrator"
+version = "0.1.0"
+description = "AI Agent Orchestrator for task automation"
+requires-python = ">=3.11"
+dependencies = [
+    "rich>=13.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-timeout>=2.3.0",
+]
+
+[project.scripts]
+orch = "runner:main"
+orch-monitor = "monitor:main"
+
+[tool.setuptools]
+py-modules = ["runner", "config", "state", "agents", "prompts", "monitor"]
