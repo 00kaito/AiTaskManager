@@ -58,7 +58,7 @@ class OrchestratorConfig:
 
     # --- Timeouty (sekundy) ---
     claude_timeout: int = 300        # 5 min na architekturę / review
-    gemini_timeout: int = 600        # 10 min na implementację
+    gemini_timeout: int = 1200        # 10 min na implementację
 
     # --- Retry ---
     agent_max_retries: int = 3
@@ -73,11 +73,10 @@ class OrchestratorConfig:
     gemini_model: str = "gemini-2.5-pro"
 
     # --- Role assignment: "claude" or "gemini" ---
-    architect_role: str = "claude"
+    architect_role: str = "gemini"
     analyzer_role: str = "gemini"
     developer_role: str = "gemini"
     reviewer_role: str = "gemini"
-
 
     # --- Git ---
     use_git: bool = True             # czy robić git diff między iteracjami
@@ -119,6 +118,8 @@ def override_from_env() -> None:
         config.claude_bin = v
     if v := os.getenv("ORCH_ARCHITECT_ROLE"):
         config.architect_role = v
+    if v := os.getenv("ORCH_ANALYZER_ROLE"):
+        config.analyzer_role = v
     if v := os.getenv("ORCH_DEVELOPER_ROLE"):
         config.developer_role = v
     if v := os.getenv("ORCH_REVIEWER_ROLE"):

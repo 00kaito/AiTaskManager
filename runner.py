@@ -881,10 +881,12 @@ def cmd_status(task_id: str = None) -> None:
 # ─────────────────────────────────────────────
 
 def _apply_role_flags(args: list[str]) -> None:
-    """Parse --architect=X --developer=X --reviewer=X flags and update config."""
+    """Parse --architect=X --analyzer=X --developer=X --reviewer=X flags and update config."""
     for arg in args:
         if arg.startswith("--architect="):
             config.architect_role = arg.split("=", 1)[1]
+        elif arg.startswith("--analyzer="):
+            config.analyzer_role = arg.split("=", 1)[1]
         elif arg.startswith("--developer="):
             config.developer_role = arg.split("=", 1)[1]
         elif arg.startswith("--reviewer="):
