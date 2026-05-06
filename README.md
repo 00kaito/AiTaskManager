@@ -1,141 +1,142 @@
 # AI Task Orchestrator (v2.0)
 
-Stanowy orkiestrator zadań współpracujący z **Claude Code** oraz **Gemini CLI**.  
-Automatyzuje pełny cykl wytwórczy: **Architektura → Implementacja → Review → Iteracja → Sukces**.
+A stateful task orchestrator working with **Claude Code** and **Gemini CLI**.  
+Automates the full development lifecycle: **Architecture → Implementation → Review → Iteration → Success**.
 
-Narzędzie jest **całkowicie niezależne od projektu** — instalujesz je raz i używasz w dowolnym repozytorium lub katalogu.
-
----
-
-## Jak to działa?
-
-Orkiestrator zarządza trzema wyspecjalizowanymi rolami agentów AI:
-
-1.  **Architekt (Claude)**: Analizuje codebase, tworzy szczegółowy plan zmian w formacie JSON oraz definiuje weryfikowalne kryteria akceptacji.
-2.  **Programista (Gemini)**: Otrzymuje plan i modyfikuje pliki projektu. Gemini ma uprawnienia do edycji kodu, tworzenia nowych plików i usuwania starych. Po każdej iteracji tworzy `implementation_report.md`.
-3.  **Reviewer (Claude)**: Sprawdza diff zmian względem kryteriów akceptacji. Jeśli wszystko jest gotowe — zatwierdza (`APPROVED`). Jeśli nie — zwraca zadanie do poprawki (`CHANGES_REQUESTED`) z konkretnymi uwagami.
+The tool is **completely project-independent** — install it once and use it in any repository or directory.
 
 ---
 
-## Instalacja (Profesjonalna i bezpieczna)
+## How it works?
 
-Zalecaną metodą instalacji narzędzi CLI jest izolacja ich w osobnym środowisku wirtualnym, aby uniknąć konfliktów z pakietami systemowymi (błąd `externally-managed-environment`).
+The orchestrator manages three specialized AI agent roles:
 
-### Metoda 1: Automatyczna (przez pipx)
-Najbezpieczniejszy standard dla narzędzi CLI. Instaluje aplikację w odizolowanym środowisku i automatycznie tworzy dowiązania (symlinks).
+1.  **Architect (Claude/Gemini)**: Analyzes the codebase, creates a detailed implementation plan in JSON format, and defines verifiable acceptance criteria.
+2.  **Developer (Gemini/Claude)**: Receives the plan and modifies project files. The developer has permissions to edit code, create new files, and delete old ones. After each iteration, it generates an `implementation_report.md`.
+3.  **Reviewer (Claude/Gemini)**: Checks the diff of changes against the acceptance criteria. If everything is ready — approves (`APPROVED`). If not — returns the task for fixes (`CHANGES_REQUESTED`) with specific feedback.
+
+---
+
+## Installation (Professional and Safe)
+
+The recommended method for installing CLI tools is to isolate them in a separate virtual environment to avoid conflicts with system packages (the `externally-managed-environment` error).
+
+### Method 1: Automatic (via pipx)
+The safest standard for CLI tools. Installs the application in an isolated environment and automatically creates symlinks.
 ```bash
 pipx install .
 ```
-*(Jeśli nie masz pipx: `sudo apt install pipx && pipx ensurepath`)*
+*(If you don't have pipx: `sudo apt install pipx && pipx ensurepath`)*
 
-### Metoda 2: Manualna (Venv + Symlink)
-Jeśli wolisz pełną kontrolę bez dodatkowych narzędzi:
+### Method 2: Manual (Venv + Symlink)
+If you prefer full control without additional tools:
 
-1. **Utwórz izolowane środowisko** wewnątrz katalogu orkiestratora:
+1. **Create an isolated environment** inside the orchestrator directory:
    ```bash
    python3 -m venv venv
    ./venv/bin/pip install .
    ```
 
-2. **Utwórz dowiązania symboliczne** w swoim lokalnym folderze binarnym:
+2. **Create symbolic links** in your local binary folder:
    ```bash
    mkdir -p ~/.local/bin
    ln -s $(pwd)/venv/bin/orch ~/.local/bin/orch
    ln -s $(pwd)/venv/bin/orch-monitor ~/.local/bin/orch-monitor
    ```
 
-Po wykonaniu jednej z powyższych metod, komendy `orch` oraz `orch-monitor` będą dostępne globalnie, nie narażając stabilności systemu.
+After following one of the above methods, the `orch` and `orch-monitor` commands will be available globally without risking system stability.
 
 ---
 
-## Szybki start
+## Quick Start
 
-1.  **Wejdź do katalogu swojego projektu** (najlepiej repozytorium git).
-2.  **Zainicjuj zadanie**:
+1.  **Enter your project directory** (ideally a git repository).
+2.  **Initialize a task**:
     ```bash
-    orch new "Zrefaktoruj parser w src/parser.py na podejście funkcyjne i dodaj testy"
+    orch new "Refactor the parser in src/parser.py to a functional approach and add tests"
     ```
-    Orkiestrator automatycznie wykryje root projektu (przez Git lub CWD) i utworzy katalog `.orchestrator/` na dane. 
-    *Wskazówka: Dodaj `.orchestrator/` do swojego `.gitignore`.*
+    The orchestrator will automatically detect the project root (via Git or CWD) and create a `.orchestrator/` directory for data. 
+    *Hint: Add `.orchestrator/` to your `.gitignore`.*
 
-3.  **Uruchom proces**:
+3.  **Run the process**:
     ```bash
     orch run TASK-XXXXXX
     ```
 
-4.  **Monitoruj postęp**:
-    W osobnym terminalu wpisz `orch-monitor`, aby widzieć status zadań na żywo.
+4.  **Monitor progress**:
+    In a separate terminal, type `orch-monitor` to see task status live.
 
 ---
 
-## Główne funkcje
+## Main Features
 
-### 🧠 Inteligentne wykrywanie root projektu
-Orkiestrator automatycznie lokalizuje główny katalog projektu za pomocą `git rev-parse --show-toplevel`. Dzięki temu możesz wywoływać komendy z dowolnego podkatalogu, a dane zawsze trafią do wspólnego folderu `.orchestrator/` w korzeniu projektu.
+### 🧠 Intelligent Project Root Detection
+The orchestrator automatically locates the main project directory using `git rev-parse --show-toplevel`. This allows you to call commands from any subdirectory, and the data will always go to a shared `.orchestrator/` folder in the project root.
 
 ### 👤 Human-in-the-loop (`--human-review`)
-Jeśli chcesz mieć pełną kontrolę, uruchom:
+If you want full control, run:
 ```bash
 orch run TASK-XXXXXX --human-review
 ```
-Orkiestrator zatrzyma się po każdej implementacji Gemini i zapyta Cię, czy rozwiązanie działa. Możesz wtedy ręcznie przetestować kod. Jeśli powiesz `fail`, Claude przeanalizuje Twój feedback i przygotuje plan naprawy dla Gemini.
+The orchestrator will stop after each Gemini implementation and ask you if the solution works. You can then manually test the code. If you say `fail`, Claude will analyze your feedback and prepare a fix plan for Gemini.
 
-### 📜 Historia i audyt (Git)
-Jeśli projekt jest repozytorium Git, orkiestrator po każdej iteracji robi automatyczny commit z opisem. Pozwala to na łatwy powrót do dowolnego etapu pracy agenta.
+### 📜 History and Audit (Git)
+If the project is a Git repository, the orchestrator makes an automatic commit with a description after each iteration. This allows for an easy return to any stage of the agent's work.
 
 ---
 
-## Komendy CLI
+## CLI Commands
 
-| Komenda | Opis |
+| Command | Description |
 |:---|:---|
-| `orch new "opis"` | Tworzy nowe zadanie i nadaje mu ID. |
-| `orch run ID` | Uruchamia pętlę agentów dla danego zadania. |
-| `orch run ID --human-review` | Uruchamia zadanie z Twoją weryfikacją po drodze. |
-| `orch follow ID "opis"`| Kontynuacja zakończonego zadania (dodaje nowe instrukcje). |
-| `orch status` | Wyświetla listę zadań w aktualnym projekcie. |
-| `orch status ID` | Wyświetla szczegółowy status i historię konkretnego zadania. |
-| `orch reset ID` | Czyści historię i przywraca zadanie do stanu NEW (zachowując opis). |
-| `orch-monitor` | Otwiera terminalowy dashboard (Live View). |
+| `orch new "description"` | Creates a new task and assigns it an ID. |
+| `orch run ID` | Runs the agent loop for the given task. |
+| `orch run ID --human-review` | Runs the task with your verification along the way. |
+| `orch follow ID "description"`| Continues a finished task (adds new instructions). |
+| `orch status` | Displays a list of tasks in the current project. |
+| `orch status ID` | Displays detailed status and history of a specific task. |
+| `orch reset ID` | Clears history and restores the task to NEW state (preserving description). |
+| `orch remove ID` | Deletes a task from the database and its artifacts. |
+| `orch-monitor` | Opens the terminal dashboard (Live View). |
 
-### Kontynuacja zadania (Follow-up)
-Jeśli zadanie jest zakończone, ale chcesz coś zmienić lub dodać w oparciu o to, co już zostało zrobione:
+### Task Continuation (Follow-up)
+If a task is finished but you want to change or add something based on what has already been done:
 ```bash
-# Dodaj nowe instrukcje do istniejącego zadania
-orch follow TASK-XXXXXX "Dopisz jeszcze testy jednostkowe dla nowej funkcji"
+# Add new instructions to an existing task
+orch follow TASK-XXXXXX "Also write unit tests for the new function"
 
-# Uruchom ponownie - Claude przeanalizuje feedback i Gemini dokończy pracę
+# Run again - Claude will analyze the feedback and Gemini will finish the job
 orch run TASK-XXXXXX
 ```
-Orkiestrator wykorzysta pełną historię zadania (plan architekta, poprzednie raporty i diffy), aby płynnie kontynuować pracę.
+The orchestrator will use the full task history (architect plan, previous reports, and diffs) to seamlessly continue the work.
 
 ---
 
-## Struktura danych (.orchestrator/)
+## Data Structure (.orchestrator/)
 
-W każdym projekcie powstaje izolowany katalog z danymi:
+An isolated data directory is created in each project:
 ```
 .orchestrator/
-├── orchestrator.db     ← Baza SQLite (zadania, historia, statusy)
-└── runs/               ← Logi i artefakty per-zadanie
+├── orchestrator.db     ← SQLite database (tasks, history, statuses)
+└── runs/               ← Logs and artifacts per-task
     └── TASK-XXXXXX/
-        ├── conversation.md    ← Pełny zapis "myśli" i decyzji agentów
-        ├── state.json         ← Stan maszyny stanów
+        ├── conversation.md    ← Full record of agent "thoughts" and decisions
+        ├── state.json         ← State machine state
         ├── architect_plan.json
         └── review_iter_N.json
 ```
 
 ---
 
-## Konfiguracja (Zmienne Env)
+## Configuration (Env Variables)
 
-Możesz nadpisać domyślne ustawienia:
-- `ORCH_MAX_ITERATIONS`: Limit rund (domyślnie 6).
-- `ORCH_ARCHITECT_ROLE`: Model dla architekta (`claude` | `gemini`).
-- `ORCH_DEVELOPER_ROLE`: Model dla programisty (`claude` | `gemini`).
-- `ORCH_USE_GIT`: Czy robić automatyczne commity (domyślnie true).
+You can override default settings:
+- `ORCH_MAX_ITERATIONS`: Round limit (default 6).
+- `ORCH_ARCHITECT_ROLE`: Model for the architect (`claude` | `gemini`).
+- `ORCH_DEVELOPER_ROLE`: Model for the developer (`claude` | `gemini`).
+- `ORCH_USE_GIT`: Whether to make automatic commits (default true).
 
-Przykład:
+Example:
 ```bash
 ORCH_MAX_ITERATIONS=3 orch run TASK-XXXXXX
 ```

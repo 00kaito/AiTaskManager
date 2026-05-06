@@ -1,5 +1,5 @@
 """
-state.py — zarządzanie stanem zadań przez SQLite
+state.py — Task state management using SQLite
 """
 
 import json
@@ -15,7 +15,7 @@ from config import config
 
 
 # ─────────────────────────────────────────────
-# Statusy zadania
+# Task Statuses
 # ─────────────────────────────────────────────
 
 class TaskStatus(str, Enum):
@@ -33,7 +33,7 @@ class TaskStatus(str, Enum):
 
 
 # ─────────────────────────────────────────────
-# Model kryterium akceptacji
+# Acceptance Criterion Model
 # ─────────────────────────────────────────────
 
 @dataclass
@@ -52,7 +52,7 @@ class Criterion:
 
 
 # ─────────────────────────────────────────────
-# Wpis historii jednej iteracji
+# Single iteration history record
 # ─────────────────────────────────────────────
 
 @dataclass
@@ -74,7 +74,7 @@ class IterationRecord:
 
 
 # ─────────────────────────────────────────────
-# Główny model zadania
+# Main Task model
 # ─────────────────────────────────────────────
 
 @dataclass
@@ -90,13 +90,13 @@ class Task:
     history: list = field(default_factory=list)    # List[IterationRecord]
     architect_plan: str = ""
     last_diff: str = ""
-    task_start_sha: str = ""          # SHA commita sprzed startu — do pełnego diffa
-    human_feedback: str = ""          # feedback człowieka gdy powiedział "fail"
-    fix_plan: str = ""                # plan naprawy Claude'a (z human feedback lub code review)
+    task_start_sha: str = ""          # commit SHA before start — for full diff
+    human_feedback: str = ""          # human feedback when "fail" was selected
+    fix_plan: str = ""                # fix plan from Claude (from human feedback or code review)
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
-    # ── Pomocnicze ──
+    # ── Helpers ──
 
     def all_criteria_done(self) -> bool:
         return bool(self.criteria) and all(
@@ -117,14 +117,14 @@ class Task:
         d.setdefault("human_feedback", "")
         d.setdefault("fix_plan", "")
         if "title" not in d:
-            # Fallback dla starych zadań
+            # Fallback for old tasks
             first_line = d.get("description", "").split("\n")[0]
             d["title"] = first_line[:100]
         return Task(**d)
 
 
 # ─────────────────────────────────────────────
-# Repozytorium (SQLite)
+# Repository (SQLite)
 # ─────────────────────────────────────────────
 
 class TaskRepository:
@@ -146,7 +146,7 @@ class TaskRepository:
             conn.close()
 
     def _init_db(self) -> None:
-        # Upewnij się, że katalog dla bazy danych (.orchestrator) istnieje
+        # Ensure database directory exists
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._conn() as conn:
             conn.execute("""
@@ -191,6 +191,11 @@ class TaskRepository:
             return None
         return Task.from_dict(json.loads(row["data"]))
 
+    def delete(self, task_id: str) -> bool:
+        with self._conn() as conn:
+            cursor = conn.execute("DELETE FROM tasks WHERE task_id = ?", (task_id,))
+            return cursor.rowcount > 0
+
     def list_all(self) -> list[Task]:
         with self._conn() as conn:
             rows = conn.execute(
@@ -205,3 +210,4 @@ class TaskRepository:
                 (status.value,)
             ).fetchall()
         return [Task.from_dict(json.loads(r["data"])) for r in rows]
+

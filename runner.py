@@ -1,13 +1,14 @@
 """
-runner.py — główna pętla orkiestratora
+runner.py — main orchestrator loop
 
-Użycie:
-    orch new "Zrefaktoruj moduł parsera do nowej architektury"
+Usage:
+    orch new "Refactor the parser module to the new architecture"
     orch run TASK-001
     orch status
     orch status TASK-001
 """
 
+import argparse
 import json
 import logging
 import sys
@@ -56,16 +57,16 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────
 
 class ConversationLogger:
-    """Zapisuje przebieg konwersacji do conversation.md."""
+    """Saves the conversation flow to conversation.md."""
 
     def __init__(
         self,
         run_dir: Path,
         task_id: str,
         description: str,
-        architect_name: str = "Claude",
-        developer_name: str = "Gemini",
-        reviewer_name: str = "Claude",
+        architect_name: str = "Architect",
+        developer_name: str = "Developer",
+        reviewer_name: str = "Reviewer",
     ):
         self.architect_name = architect_name.capitalize()
         self.developer_name = developer_name.capitalize()
@@ -107,7 +108,7 @@ class ConversationLogger:
 
         self._append(
             f"## ARCHITECTING — {self._ts()}\n\n"
-            f"### {self.architect_name} (Architekt)\n\n"
+            f"### {self.architect_name}\n\n"
             f"**Summary:** {data.get('summary', '')}\n\n"
             f"**Plan:**\n{plan_lines}\n\n"
             f"**Acceptance Criteria:**\n{criteria_lines}\n\n"
@@ -128,7 +129,7 @@ class ConversationLogger:
 
         self._append(
             f"## ANALYZING — {self._ts()}\n\n"
-            f"### Gemini (Analityk Kodu)\n\n"
+            f"### Code Analyst\n\n"
             f"**Enriched Plan:**\n\n{plan_lines}\n\n"
             f"---\n\n"
         )
@@ -143,19 +144,19 @@ class ConversationLogger:
         developer_output: str,
     ) -> None:
         if fix_context:
-            context_block = f"**Fix context przekazany {self.developer_name}:**\n```\n{fix_context}\n```\n\n"
+            context_block = f"**Fix context passed to {self.developer_name}:**\n```\n{fix_context}\n```\n\n"
         elif open_criteria:
             items = "\n".join(
                 f"- `[{c['id']}]` {c['description']}" for c in open_criteria
             )
-            context_block = f"**Open criteria do adresowania:**\n{items}\n\n"
+            context_block = f"**Open criteria to address:**\n{items}\n\n"
         else:
-            context_block = "*Pierwsza iteracja — implementacja pełnego planu.*\n\n"
+            context_block = "*First iteration — implementation of the full plan.*\n\n"
 
         report_block = (
             impl_report.strip()
             if impl_report.strip()
-            else "*Brak implementation_report.md.*"
+            else "*No implementation_report.md found.*"
         )
 
         developer_block = ""
@@ -170,7 +171,7 @@ class ConversationLogger:
 
         self._append(
             f"## IMPLEMENTING — iter {iteration} — {self._ts()}\n\n"
-            f"### {self.developer_name} (Programista)\n\n"
+            f"### {self.developer_name}\n\n"
             f"{context_block}"
             f"**Git diff:** {diff_stat}\n\n"
             f"**Implementation Report:**\n\n{report_block}\n\n"
@@ -203,7 +204,7 @@ class ConversationLogger:
 
         self._append(
             f"## REVIEWING — iter {iteration} — {self._ts()}{mode_note}\n\n"
-            f"### {self.reviewer_name} (Reviewer)\n\n"
+            f"### {self.reviewer_name}\n\n"
             f"**Overall:** {overall_icon} {overall}\n\n"
             f"**Criteria:**\n{criteria_lines}\n\n"
             f"**Blocking issues:**\n{blocking_block}\n\n"
@@ -215,18 +216,18 @@ class ConversationLogger:
     def log_awaiting_human(self, iteration: int) -> None:
         self._append(
             f"## AWAITING_HUMAN — iter {iteration} — {self._ts()}\n\n"
-            f"*Orkiestrator czeka na decyzję człowieka...*\n\n"
+            f"*Orchestrator is waiting for human decision...*\n\n"
         )
 
     def log_human_decision(self, iteration: int, approved: bool, feedback: str = "") -> None:
         if approved:
             self._append(
-                f"**Decyzja człowieka:** ✅ OK — implementacja działa poprawnie\n\n"
+                f"**Human decision:** ✅ OK — implementation works correctly\n\n"
                 f"---\n\n"
             )
         else:
             self._append(
-                f"**Decyzja człowieka:** ❌ FAIL\n\n"
+                f"**Human decision:** ❌ FAIL\n\n"
                 f"**Feedback:** {feedback}\n\n"
                 f"---\n\n"
             )
@@ -241,7 +242,7 @@ class ConversationLogger:
 
         self._append(
             f"## HUMAN_FEEDBACK — iter {iteration} — {self._ts()}\n\n"
-            f"### {self.reviewer_name} (Analiza feedbacku → plan naprawy)\n\n"
+            f"### {self.reviewer_name}\n\n"
             f"**Root cause:** {data.get('root_cause', '')}\n\n"
             f"**Fix steps:**\n{steps_lines}\n\n"
             f"**Key fix:** {data.get('key_fix', '')}\n\n"
@@ -250,12 +251,12 @@ class ConversationLogger:
 
 
 # ─────────────────────────────────────────────
-# Orkiestrator
+# Orchestrator
 # ─────────────────────────────────────────────
 
 class Orchestrator:
     def __init__(self, project_root: Path = None, human_review: bool = False):
-        # Jeśli nie podano, przyjmij wykryty root projektu (git root lub CWD)
+        # If not provided, use the detected project root (git root or CWD)
         self.project_root = project_root or config.base_dir
         self.repo = TaskRepository()
         self.architect = create_agent(config.architect_role)
@@ -303,9 +304,9 @@ class Orchestrator:
         run_dir.mkdir(parents=True, exist_ok=True)
         self.conv_log = ConversationLogger(
             run_dir, task_id, task.description,
-            architect_name=config.architect_role,
-            developer_name=config.developer_role,
-            reviewer_name=config.reviewer_role,
+            architect_name="Architect",
+            developer_name="Developer",
+            reviewer_name="Reviewer",
         )
 
         # Jeśli startujemy z feedbackiem (np. po orch follow), zaloguj go od razu
@@ -335,11 +336,11 @@ class Orchestrator:
     def _step(self, task: Task) -> Task:
         if task.status == TaskStatus.NEW:
             return self._architecting(task)
-        elif task.status == TaskStatus.ARCHITECTING:
+        elif task.status == TaskStatus.ANALYZING:
             return self._analyzing(task)
-        elif task.status in (TaskStatus.ANALYZING, TaskStatus.CHANGES_REQUESTED):
+        elif task.status in (TaskStatus.IMPLEMENTING, TaskStatus.CHANGES_REQUESTED):
             return self._implementing(task)
-        elif task.status in (TaskStatus.IMPLEMENTING, TaskStatus.REVIEWING):
+        elif task.status == TaskStatus.REVIEWING:
             return self._reviewing(task)
         elif task.status == TaskStatus.AWAITING_HUMAN:
             return self._awaiting_human(task)
@@ -350,13 +351,13 @@ class Orchestrator:
             task.status = TaskStatus.FAILED
             return task
 
-    # ── FAZA 1: ARCHITECTING ──
+    # ── PHASE 1: ARCHITECTING ──
 
     def _architecting(self, task: Task) -> Task:
         task.status = TaskStatus.ARCHITECTING
         logger.info(f"[{task.task_id}] Phase: ARCHITECTING")
 
-        # Zapamiętaj SHA przed startem taska — do pełnego diffa w review
+        # Remember SHA before starting task — for full diff in review
         if self.git and not task.task_start_sha:
             task.task_start_sha = self.git.get_current_sha()
             logger.info(f"Task start SHA: {task.task_start_sha[:8] or 'none'}")
@@ -379,10 +380,10 @@ class Orchestrator:
             task.status = TaskStatus.FAILED
             return task
 
-        # Zapisz plan
+        # Save plan
         task.architect_plan = json.dumps(data, ensure_ascii=False, indent=2)
 
-        # Zapisz kryteria
+        # Save criteria
         raw_criteria = data.get("acceptance_criteria", [])
         task.criteria = [
             {
@@ -403,10 +404,15 @@ class Orchestrator:
         if self.conv_log:
             self.conv_log.log_architecting(data)
 
-        task.status = TaskStatus.ANALYZING  # → wejdź w analyzing
+        # Przejdź do analizy LUB bezpośrednio do implementacji
+        if config.use_analyzer:
+            task.status = TaskStatus.ANALYZING
+        else:
+            task.status = TaskStatus.IMPLEMENTING
+        
         return task
 
-    # ── FAZA 1b: ANALYZING — Gemini bada kod i wzbogaca plan ──
+    # ── PHASE 1b: ANALYZING — Gemini examines the code and enriches the plan ──
 
     def _analyzing(self, task: Task) -> Task:
         logger.info(f"[{task.task_id}] Phase: ANALYZING")
@@ -428,7 +434,7 @@ class Orchestrator:
             task.status = TaskStatus.FAILED
             return task
 
-        # Nadpisz plan nowym (wzbogaconym)
+        # Overwrite plan with new (enriched) one
         try:
             old_data = json.loads(task.architect_plan)
             old_data["plan"] = data.get("plan", [])
@@ -442,7 +448,7 @@ class Orchestrator:
         task.status = TaskStatus.IMPLEMENTING
         return task
 
-    # ── FAZA 2: IMPLEMENTING ──
+    # ── PHASE 2: IMPLEMENTING ──
 
     def _implementing(self, task: Task) -> Task:
         task.status = TaskStatus.IMPLEMENTING
@@ -523,10 +529,10 @@ class Orchestrator:
         if self.human_review:
             task.status = TaskStatus.AWAITING_HUMAN
         else:
-            task.status = TaskStatus.IMPLEMENTING  # → przejdź do review
+            task.status = TaskStatus.REVIEWING  # → przejdź do review
         return task
 
-    # ── FAZA 3a: AWAITING_HUMAN ──
+    # ── PHASE 3a: AWAITING_HUMAN ──
 
     def _awaiting_human(self, task: Task) -> Task:
         task.status = TaskStatus.AWAITING_HUMAN
@@ -539,11 +545,11 @@ class Orchestrator:
         print(f"\n{'─'*60}")
         print(f"  ⏸  HUMAN REVIEW REQUIRED — iter {task.iteration}")
         print(f"  Task: {task.task_id}")
-        print(f"  Uruchom aplikację i sprawdź czy działa poprawnie.")
+        print(f"  Run the application and verify if it works correctly.")
         print(f"{'─'*60}\n")
 
         while True:
-            answer = input("  Czy działa poprawnie? [ok / fail]: ").strip().lower()
+            answer = input("  Does it work correctly? [ok / fail]: ").strip().lower()
 
             if answer == "ok":
                 task.human_feedback = ""
@@ -553,9 +559,9 @@ class Orchestrator:
                 break
 
             elif answer == "fail":
-                feedback = input("  Co nie działa? Opisz konkretnie: ").strip()
+                feedback = input("  What is not working? Describe specifically: ").strip()
                 if not feedback:
-                    print("  Podaj opis problemu.")
+                    print("  Please provide a description of the issue.")
                     continue
                 task.human_feedback = feedback
                 task.status = TaskStatus.HUMAN_FEEDBACK
@@ -566,12 +572,12 @@ class Orchestrator:
                 break
 
             else:
-                print("  Wpisz 'ok' lub 'fail'.")
+                print("  Enter 'ok' or 'fail'.")
 
         self.repo.save(task)
         return task
 
-    # ── FAZA 3b: HUMAN_FEEDBACK — Claude analizuje feedback i tworzy plan naprawy ──
+    # ── PHASE 3b: HUMAN_FEEDBACK — Claude analyzes feedback and creates a fix plan ──
 
     def _human_feedback(self, task: Task) -> Task:
         logger.info(
@@ -635,7 +641,7 @@ class Orchestrator:
         task.status = TaskStatus.CHANGES_REQUESTED
         return task
 
-    # ── FAZA 4: REVIEWING ──
+    # ── PHASE 4: REVIEWING ──
 
     def _reviewing(self, task: Task) -> Task:
         logger.info(
@@ -723,18 +729,38 @@ class Orchestrator:
 
         if overall == "APPROVED" and task.all_criteria_done():
             task.status = TaskStatus.APPROVED
+            
+            # Git Squash: Merge all iteration commits into one clean commit with description
+            if self.git and task.task_start_sha:
+                msg_data = review_data.get("commit_message")
+                if msg_data and isinstance(msg_data, dict):
+                    subject = msg_data.get("subject", "Task completed").strip()
+                    # Ensure [TASK-ID] prefix
+                    prefix = f"[{task.task_id}] "
+                    if not subject.startswith(prefix):
+                        subject = f"{prefix}{subject}"
+                        
+                    body = msg_data.get("body", "")
+                    full_msg = f"{subject}\n\n{body}".strip()
+                    
+                    logger.info(f"Squashing intermediate commits into one: {subject}")
+                    if self.git.squash_commits(task.task_start_sha, full_msg):
+                        logger.info("Git squash successful")
+                    else:
+                        logger.warning("Git squash failed")
         else:
-            # W trybie human_review blocking issues z code review → fix_plan dla Gemini
-            if self.human_review and blocking:
+            # Przekaż uwagi z review (blocking issues) jako fix_plan dla Gemini
+            if blocking or review_data.get("next_focus"):
                 next_focus = review_data.get("next_focus", "")
                 task.fix_plan = (
-                    "Code quality issues from review:\n"
-                    + "\n".join(f"- {issue}" for issue in blocking)
+                    "Issues from review:\n"
+                    + "\n".join(f"- {issue}" for issue in (blocking or []))
                     + (f"\n\nNext focus: {next_focus}" if next_focus else "")
                 )
             task.status = TaskStatus.CHANGES_REQUESTED
 
         # Zapisz review do pliku
+        run_dir = config.runs_dir / task.task_id
         review_path = run_dir / f"review_iter_{task.iteration}.json"
         review_path.write_text(
             json.dumps(review_data, ensure_ascii=False, indent=2),
@@ -831,7 +857,7 @@ def cmd_reset(task_id: str) -> None:
     for f in run_dir.glob("review_iter_*.json"):
         f.unlink()
 
-    print(f"\n🔄 Task {task_id} zresetowany: {old_status} → NEW")
+    print(f"\n🔄 Task {task_id} reset: {old_status} → NEW")
     print(f"   Run with: orch run {task_id}\n")
 
 
@@ -847,9 +873,35 @@ def cmd_follow(task_id: str, feedback: str) -> None:
     task.stuck_counter = 0
     repo.save(task)
 
-    print(f"\n✅ Task {task_id} wznowiony jako kontynuacja (status: HUMAN_FEEDBACK)")
-    print(f"   Dodano polecenie: {feedback}")
+    print(f"\n✅ Task {task_id} resumed as follow-up (status: HUMAN_FEEDBACK)")
+    print(f"   Added instruction: {feedback}")
     print(f"   Run with: orch run {task_id}\n")
+
+
+def cmd_remove(task_id: str) -> None:
+    repo = TaskRepository()
+    task = repo.load(task_id)
+    if not task:
+        print(f"Task {task_id} not found")
+        sys.exit(1)
+
+    # 1. Usuń z bazy
+    if repo.delete(task_id):
+        print(f"✅ Task {task_id} removed from database.")
+    else:
+        print(f"❌ Failed to remove task {task_id} from database.")
+
+    # 2. Usuń artefakty (katalog runs/TASK-ID)
+    run_dir = config.runs_dir / task_id
+    if run_dir.exists():
+        import shutil
+        try:
+            shutil.rmtree(run_dir)
+            print(f"✅ Artifact directory {run_dir} has been removed.")
+        except Exception as e:
+            print(f"⚠️ Error removing directory {run_dir}: {e}")
+    else:
+        print(f"ℹ️ Artifact directory {run_dir} did not exist.")
 
 
 def cmd_status(task_id: str = None) -> None:
@@ -882,69 +934,73 @@ def cmd_status(task_id: str = None) -> None:
 # Entry point
 # ─────────────────────────────────────────────
 
-def _apply_role_flags(args: list[str]) -> None:
-    """Parse --architect=X --analyzer=X --developer=X --reviewer=X flags and update config."""
-    for arg in args:
-        if arg.startswith("--architect="):
-            config.architect_role = arg.split("=", 1)[1]
-        elif arg.startswith("--analyzer="):
-            config.analyzer_role = arg.split("=", 1)[1]
-        elif arg.startswith("--developer="):
-            config.developer_role = arg.split("=", 1)[1]
-        elif arg.startswith("--reviewer="):
-            config.reviewer_role = arg.split("=", 1)[1]
-
-
 def main() -> None:
     override_from_env()
     config.runs_dir.mkdir(parents=True, exist_ok=True)
     setup_logging()
 
-    args = sys.argv[1:]
-    if not args:
-        print(__doc__)
+    parser = argparse.ArgumentParser(
+        description="AI Orchestrator CLI",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__
+    )
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # Command: new
+    p_new = subparsers.add_parser("new", help="Create a new task")
+    p_new.add_argument("description", nargs="+", help="Task description")
+    p_new.set_defaults(func=lambda args: cmd_new(" ".join(args.description)))
+
+    # Command: run
+    p_run = subparsers.add_parser("run", help="Execute a task")
+    p_run.add_argument("task_id", help="ID of the task to run")
+    p_run.add_argument("--human-review", action="store_true", help="Enable human review phase")
+    p_run.add_argument("--analyze", action="store_true", help="Enable deep analysis phase")
+    p_run.add_argument("--architect", help="Set architect role (claude|gemini)")
+    p_run.add_argument("--analyzer", help="Set analyzer role (claude|gemini)")
+    p_run.add_argument("--developer", help="Set developer role (claude|gemini)")
+    p_run.add_argument("--reviewer", help="Set reviewer role (claude|gemini)")
+
+    def run_handler(args):
+        if args.architect: config.architect_role = args.architect
+        if args.analyzer: config.analyzer_role = args.analyzer
+        if args.developer: config.developer_role = args.developer
+        if args.reviewer: config.reviewer_role = args.reviewer
+        if args.analyze: config.use_analyzer = True
+        cmd_run(args.task_id, human_review=args.human_review)
+
+    p_run.set_defaults(func=run_handler)
+
+    # Command: status
+    p_status = subparsers.add_parser("status", help="Show task status")
+    p_status.add_argument("task_id", nargs="?", help="Optional task ID")
+    p_status.set_defaults(func=lambda args: cmd_status(args.task_id))
+
+    # Command: reset
+    p_reset = subparsers.add_parser("reset", help="Reset a task to NEW state")
+    p_reset.add_argument("task_id", help="Task ID")
+    p_reset.set_defaults(func=lambda args: cmd_reset(args.task_id))
+
+    # Command: remove
+    p_remove = subparsers.add_parser("remove", help="Delete a task and its artifacts")
+    p_remove.add_argument("task_id", help="Task ID")
+    p_remove.set_defaults(func=lambda args: cmd_remove(args.task_id))
+
+    # Command: follow
+    p_follow = subparsers.add_parser("follow", help="Add feedback to a finished task")
+    p_follow.add_argument("task_id", help="Task ID")
+    p_follow.add_argument("feedback", nargs="+", help="Feedback or new instructions")
+    p_follow.set_defaults(func=lambda args: cmd_follow(args.task_id, " ".join(args.feedback)))
+
+    if len(sys.argv) == 1:
+        parser.print_help()
         sys.exit(0)
 
-    cmd = args[0]
-
-    if cmd == "new":
-        if len(args) < 2:
-            print("Usage: orch new '<task description>'")
-            sys.exit(1)
-        cmd_new(" ".join(a for a in args[1:] if not a.startswith("--")))
-
-    elif cmd == "run":
-        run_args = [a for a in args[1:] if not a.startswith("--")]
-        human_review = "--human-review" in args
-        _apply_role_flags(args)
-        if not run_args:
-            print(
-                "Usage: orch run <TASK-ID> [--human-review] "
-                "[--architect=claude|gemini] [--developer=claude|gemini] "
-                "[--reviewer=claude|gemini]"
-            )
-            sys.exit(1)
-        cmd_run(run_args[0], human_review=human_review)
-
-    elif cmd == "status":
-        cmd_status(args[1] if len(args) > 1 else None)
-
-    elif cmd == "reset":
-        if len(args) < 2:
-            print("Usage: orch reset <TASK-ID>")
-            sys.exit(1)
-        cmd_reset(args[1])
-
-    elif cmd == "follow":
-        if len(args) < 3:
-            print("Usage: orch follow <TASK-ID> '<feedback/instructions>'")
-            sys.exit(1)
-        cmd_follow(args[1], " ".join(args[2:]))
-
+    args = parser.parse_args()
+    if hasattr(args, "func"):
+        args.func(args)
     else:
-        print(f"Unknown command: {cmd}")
-        print("Commands: new | run | status | reset | follow")
-        sys.exit(1)
+        parser.print_help()
 
 
 if __name__ == "__main__":

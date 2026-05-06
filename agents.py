@@ -1,11 +1,11 @@
 """
-agents.py — wrappery subprocess dla Claude Code CLI i Gemini CLI
+agents.py — subprocess wrappers for Claude Code CLI and Gemini CLI
 
-Każde wywołanie:
-  - ma timeout
-  - ma retry z backoff
-  - waliduje output
-  - zwraca ustrukturyzowany wynik
+Each call:
+  - has a timeout
+  - has a retry with backoff
+  - validates the output
+  - returns a structured result
 """
 
 import io
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────
-# Wynik wywołania agenta
+# Agent call result
 # ─────────────────────────────────────────────
 
 @dataclass
@@ -37,14 +37,14 @@ class AgentResult:
     duration_sec: float = 0.0
 
     def json(self) -> dict | list:
-        """Zwraca sparsowany JSON lub rzuca ValueError."""
+        """Returns parsed JSON or raises ValueError."""
         if self.parsed is not None:
             return self.parsed
         raise ValueError(f"No parsed JSON. Raw output: {self.raw_output[:500]}")
 
 
 # ─────────────────────────────────────────────
-# Bazowa klasa agenta
+# Base agent class
 # ─────────────────────────────────────────────
 
 class BaseAgent:
@@ -56,13 +56,13 @@ class BaseAgent:
         cwd: Optional[Path],
         timeout: int,
     ) -> tuple[str, str, int]:
-        """Uruchamia subprocess ze strumieniowaniem logów w czasie rzeczywistym."""
+        """Runs a subprocess with real-time log streaming."""
         logger.debug(f"[{self.name}] CMD: {' '.join(cmd[:4])}...")
         
         stdout_lines = []
         stderr_lines = []
         
-        # Używamy Popen zamiast run, aby móc czytać strumienie w locie
+        # Use Popen instead of run to be able to read streams on the fly
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -77,18 +77,18 @@ class BaseAgent:
             for line in stream:
                 line_stripped = line.rstrip()
                 target_list.append(line)
-                # Logujemy każdą linijkę w czasie rzeczywistym
+                # Log each line in real-time
                 log_prefix = f"[{self.name}][ERR]" if is_stderr else f"[{self.name}]"
                 logger.info(f"{log_prefix} {line_stripped}")
 
-        # Wątki do czytania stdout i stderr równolegle
+        # Threads to read stdout and stderr in parallel
         t1 = threading.Thread(target=read_stream, args=(proc.stdout, stdout_lines, False))
         t2 = threading.Thread(target=read_stream, args=(proc.stderr, stderr_lines, True))
         t1.start()
         t2.start()
 
         try:
-            # Czekamy na zakończenie procesu z timeoutem
+            # Wait for process completion with timeout
             return_code = proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             proc.kill()
@@ -102,20 +102,20 @@ class BaseAgent:
         return "".join(stdout_lines), "".join(stderr_lines), return_code
 
     def _parse_json(self, raw: str) -> Optional[dict | list]:
-        """Próbuje sparsować JSON — odporna na markdown fences."""
+        """Tries to parse JSON — resistant to markdown fences."""
         text = raw.strip()
 
-        # Usuń markdown fences jeśli agent je doda mimo instrukcji
+        # Remove markdown fences if the agent adds them despite instructions
         if text.startswith("```"):
             lines = text.split("\n")
-            # Usuń pierwszą i ostatnią linię jeśli to fences
+            # Remove first and last lines if they are fences
             if lines[0].startswith("```"):
                 lines = lines[1:]
             if lines and lines[-1].strip() == "```":
                 lines = lines[:-1]
             text = "\n".join(lines).strip()
 
-        # Znajdź pierwszy { lub [ i ostatni } lub ]
+        # Find first { or [ and last } or ]
         start = -1
         for i, ch in enumerate(text):
             if ch in "{[":
@@ -209,18 +209,18 @@ class ClaudeAgent(BaseAgent):
         timeout: Optional[int] = None,
     ) -> AgentResult:
         """
-        Wywołuje `claude --print --output-format json`.
-        Używa pliku tymczasowego na prompt, aby uniknąć limitów argumentów CLI.
+        Calls `claude --print --output-format json`.
+        Uses a temporary file for the prompt to avoid CLI argument limits.
         """
         effective_timeout = timeout or config.claude_timeout
 
-        # Zapisz prompt do pliku tymczasowego
+        # Save prompt to temporary file
         temp_dir = config.base_dir / ".orchestrator"
         temp_dir.mkdir(parents=True, exist_ok=True)
         prompt_file = temp_dir / f"prompt_claude_{int(time.time())}.txt"
         prompt_file.write_text(prompt, encoding="utf-8")
 
-        # Polecenie dla Claude, aby przeczytał plik i wykonał zadanie
+        # Instruction for Claude to read the file and execute the task
         instruction = f"Read and execute instructions from file: {prompt_file}. Respond with ONLY the required JSON."
 
         cmd = [
@@ -237,7 +237,7 @@ class ClaudeAgent(BaseAgent):
 
         raw = self._call_with_retry(cmd, cwd, effective_timeout, expect_json=False)
         
-        # Usuń plik po użyciu
+        # Remove file after use
         try: prompt_file.unlink()
         except: pass
 
@@ -248,7 +248,7 @@ class ClaudeAgent(BaseAgent):
         if not isinstance(envelope, dict):
             return AgentResult(
                 success=False,
-                error=f"Nieparsowalna odpowiedź CLI: {raw.raw_output[:200]}",
+                error=f"Unparsable CLI response: {raw.raw_output[:200]}",
                 raw_output=raw.raw_output,
                 attempts=raw.attempts,
                 duration_sec=raw.duration_sec,
@@ -257,7 +257,7 @@ class ClaudeAgent(BaseAgent):
         if envelope.get("is_error"):
             return AgentResult(
                 success=False,
-                error=envelope.get("result", "Claude zwrócił błąd"),
+                error=envelope.get("result", "Claude returned an error"),
                 raw_output=raw.raw_output,
                 attempts=raw.attempts,
                 duration_sec=raw.duration_sec,
@@ -275,10 +275,10 @@ class ClaudeAgent(BaseAgent):
 
         parsed = self._parse_json(claude_text)
         if parsed is None:
-            logger.warning(f"[claude] Brak JSON w odpowiedzi: {claude_text[:200]}")
+            logger.warning(f"[claude] No JSON in response: {claude_text[:200]}")
             return AgentResult(
                 success=False,
-                error=f"Claude nie zwrócił JSON: {claude_text[:200]}",
+                error=f"Claude did not return JSON: {claude_text[:200]}",
                 raw_output=claude_text,
                 attempts=raw.attempts,
                 duration_sec=raw.duration_sec,
@@ -299,8 +299,8 @@ class ClaudeAgent(BaseAgent):
         cwd: Optional[Path] = None,
         expect_json: bool = True,
     ) -> AgentResult:
-        """Dodaje pliki jako context przez --context flag (jeśli Claude Code wspiera)."""
-        # Jeśli Claude Code nie ma --context, wpleć pliki do prompta
+        """Adds files as context via --context flag (if Claude Code supports it)."""
+        # If Claude Code doesn't have --context, embed files into the prompt
         file_contents = []
         for f in context_files:
             if f.exists():
@@ -331,10 +331,10 @@ class GeminiAgent(BaseAgent):
         expect_json: bool = False,
         timeout: Optional[int] = None,
     ) -> AgentResult:
-        """Wywołuje Gemini CLI przez plik tymczasowy na prompt."""
+        """Calls Gemini CLI via temporary prompt file."""
         effective_timeout = timeout or config.gemini_timeout
 
-        # Zapisz prompt do pliku tymczasowego
+        # Save prompt to temporary file
         temp_dir = config.base_dir / ".orchestrator"
         temp_dir.mkdir(parents=True, exist_ok=True)
         prompt_file = temp_dir / f"prompt_gemini_{int(time.time())}.txt"
@@ -354,7 +354,7 @@ class GeminiAgent(BaseAgent):
         )
         res = self._call_with_retry(cmd, cwd, effective_timeout, expect_json=expect_json)
         
-        # Usuń plik po użyciu
+        # Remove file after use
         try: prompt_file.unlink()
         except: pass
 
@@ -398,14 +398,14 @@ class GitHelper:
             return "", 1
 
     def diff_stat(self) -> tuple[str, int]:
-        """Zwraca (opis zmienionych plików, suma linii changed)."""
+        """Returns (diff stat description, total lines changed)."""
         stat, code = self._git("diff", "--stat", "HEAD")
         if code != 0:
             stat, code = self._git("diff", "--stat")  # fallback: unstaged
         if not stat:
             return "no changes", 0
 
-        # Parsuj ostatnią linię: "3 files changed, 45 insertions(+), 12 deletions(-)"
+        # Parse last line: "3 files changed, 45 insertions(+), 12 deletions(-)"
         total_lines = 0
         last_line = stat.strip().split("\n")[-1]
         for token in last_line.split(","):
@@ -419,12 +419,12 @@ class GitHelper:
         return stat, total_lines
 
     def get_current_sha(self) -> str:
-        """Zwraca SHA aktualnego HEAD."""
+        """Returns the SHA of current HEAD."""
         sha, code = self._git("rev-parse", "HEAD")
         return sha if code == 0 else ""
 
     def full_diff_from_sha(self, start_sha: str, max_chars: int = 15000) -> str:
-        """Pełny diff od podanego SHA (czyli od startu taska) do HEAD."""
+        """Full diff from given SHA (task start) to HEAD."""
         if not start_sha:
             return self.full_diff(max_chars)
         diff, code = self._git("diff", start_sha, "HEAD")
@@ -433,14 +433,26 @@ class GitHelper:
         return diff[:max_chars] if diff else "(no diff from task start)"
 
     def full_diff(self, max_chars: int = 10000) -> str:
-        """Pełny diff od ostatniego commita."""
+        """Full diff from last commit."""
         diff, _ = self._git("diff", "HEAD")
         if not diff:
             diff, _ = self._git("diff")
         return diff[:max_chars] if diff else "(no diff available)"
 
     def stage_and_commit(self, message: str) -> bool:
-        """Auto-commit po każdej iteracji — dla audytu."""
+        """Auto-commit after each iteration — for audit."""
         self._git("add", "-A")
+        _, code = self._git("commit", "-m", message)
+        return code == 0
+
+    def squash_commits(self, start_sha: str, message: str) -> bool:
+        """Squashes all commits from start_sha into one with a new message."""
+        if not start_sha:
+            return False
+        # 1. Reset HEAD to start_sha, leaving changes in index
+        _, code = self._git("reset", "--soft", start_sha)
+        if code != 0:
+            return False
+        # 2. Make one clean commit with description from Reviewer
         _, code = self._git("commit", "-m", message)
         return code == 0

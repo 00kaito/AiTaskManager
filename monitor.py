@@ -1,10 +1,10 @@
 """
-monitor.py — live dashboard stanu zadań w terminalu
+monitor.py — live task status dashboard in the terminal
 
-Użycie:
-    python monitor.py              # odświeża co 3s
-    python monitor.py TASK-001    # śledź konkretne zadanie
-    python monitor.py --once      # jednorazowy print i wyjdź
+Usage:
+    python monitor.py              # refresh every 3s
+    python monitor.py TASK-001    # track a specific task
+    python monitor.py --once      # single print and exit
 """
 
 import json
@@ -15,7 +15,7 @@ from pathlib import Path
 from config import config
 from state import TaskRepository, TaskStatus
 
-# Spróbuj użyć `rich` jeśli dostępny; fallback na plain text
+# Try to use `rich` if available; fallback to plain text
 try:
     from rich.console import Console
     from rich.table import Table
@@ -28,7 +28,7 @@ except ImportError:
     RICH = False
 
 
-REFRESH_INTERVAL = 3  # sekundy
+REFRESH_INTERVAL = 3  # seconds
 
 STATUS_COLORS = {
     TaskStatus.NEW: "dim white",
@@ -60,7 +60,7 @@ STATUS_ICONS = {
 # ─────────────────────────────────────────────
 
 def build_table(repo: TaskRepository, filter_id: str = None):
-    """Buduje rich.Table z aktualnym stanem zadań."""
+    """Builds a rich.Table with the current state of tasks."""
     tasks = repo.list_all()
     if filter_id:
         tasks = [t for t in tasks if t.task_id == filter_id]
@@ -115,7 +115,7 @@ def build_table(repo: TaskRepository, filter_id: str = None):
 
 
 def build_detail_panel(repo: TaskRepository, task_id: str):
-    """Panel ze szczegółami jednego zadania — kryteria i historia."""
+    """Panel with details of a single task — criteria and history."""
     task = repo.load(task_id)
     if not task:
         return Panel(f"Task {task_id} not found", title="Error")

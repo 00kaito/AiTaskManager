@@ -1,8 +1,8 @@
 """
-prompts.py — szablony promptów dla każdej fazy orkiestratora
+prompts.py — prompt templates for each orchestrator phase
 
-Każda funkcja zwraca gotowy string do wysłania do agenta.
-Dane wejściowe to zawsze jawne parametry — zero globalnych.
+Each function returns a ready-to-send string for the agent.
+Input data are always explicit parameters — zero globals.
 """
 
 import json
@@ -10,10 +10,11 @@ from pathlib import Path
 
 
 # ─────────────────────────────────────────────
-# FAZA 1: ARCHITECTING  →  Claude
+# PHASE 1: ARCHITECTING  →  Claude
 # ─────────────────────────────────────────────
 
 def architect_prompt(task_description: str, codebase_summary: str) -> str:
+# ... rest of file (only docstrings/comments changed)
     return f"""
 You are a senior software architect. Your job is to create a precise implementation plan.
 
@@ -57,7 +58,7 @@ Rules for acceptance_criteria:
 
 
 # ─────────────────────────────────────────────
-# FAZA 1b: ANALYZING  →  Gemini
+# PHASE 1b: ANALYZING  →  Gemini
 # ─────────────────────────────────────────────
 
 def analyze_prompt(task_description: str, architect_plan: str, codebase_summary: str) -> str:
@@ -98,7 +99,7 @@ Your job is to deeply analyze the codebase and enrich the plan with precise code
 
 
 # ─────────────────────────────────────────────
-# FAZA 2: IMPLEMENTING  →  Gemini
+# PHASE 2: IMPLEMENTING  →  Gemini
 # ─────────────────────────────────────────────
 
 def implement_prompt(
@@ -177,7 +178,7 @@ None / description
 
 
 # ─────────────────────────────────────────────
-# FAZA 3: REVIEWING  →  Claude
+# PHASE 3: REVIEWING  →  Claude
 # ─────────────────────────────────────────────
 
 def review_prompt(
@@ -229,11 +230,19 @@ You are a strict code reviewer. Your job is to verify whether the implementation
   "suggestions": [
     "non-blocking suggestion (optional improvements)"
   ],
-  "next_focus": "1-2 sentences telling Gemini exactly what to do next (only if CHANGES_REQUESTED)"
+  "next_focus": "1-2 sentences telling Gemini exactly what to do next (only if CHANGES_REQUESTED)",
+  "commit_message": {{
+    "subject": "Subject Line (max 50 chars, no period)",
+    "body": "Detailed explanation of changes (wrapped at 72 chars/line)"
+  }}
 }}
 
 Rules:
 - APPROVED only if ALL criteria have status DONE
+- commit_message is MANDATORY ONLY when status is APPROVED. Otherwise, leave it null or omit it.
+- Follow Git commit best practices for commit_message:
+  - Subject: Use imperative mood ("Add feature", not "Added feature"), max 50 chars.
+  - Body: Explain WHAT and WHY. Wrap lines at 72 characters.
 - Be strict — "looks like it might work" is NOT evidence
 - evidence must reference actual code in the diff or existing files
 - If a criterion cannot be verified from the diff alone, mark it PENDING with evidence="not visible in diff, needs manual check"
@@ -242,7 +251,7 @@ Rules:
 
 
 # ─────────────────────────────────────────────
-# FAZA HUMAN_FEEDBACK: analiza feedbacku  →  Claude
+# PHASE HUMAN_FEEDBACK: feedback analysis  →  Claude
 # ─────────────────────────────────────────────
 
 def human_feedback_prompt(
@@ -298,7 +307,7 @@ Rules:
 
 
 # ─────────────────────────────────────────────
-# FAZA REVIEWING (human_review mode)  →  Claude
+# PHASE REVIEWING (human_review mode)  →  Claude
 # ─────────────────────────────────────────────
 
 def code_quality_review_prompt(
@@ -351,12 +360,20 @@ Your job is to review CODE QUALITY only — not functional correctness.
   "suggestions": [
     "non-blocking suggestion (readability, edge case handling, etc.)"
   ],
-  "next_focus": "1-2 sentences telling Gemini exactly what to fix (only if CHANGES_REQUESTED)"
+  "next_focus": "1-2 sentences telling Gemini exactly what to fix (only if CHANGES_REQUESTED)",
+  "commit_message": {{
+    "subject": "Subject Line (max 50 chars, no period)",
+    "body": "Detailed explanation of changes (wrapped at 72 chars/line)"
+  }}
 }}
 
 Rules:
 - Mark ALL acceptance criteria as DONE — human confirmed functionality
 - APPROVED if there are no blocking code quality issues
+- commit_message is MANDATORY ONLY when status is APPROVED. Otherwise, leave it null or omit it.
+- Follow Git commit best practices for commit_message:
+  - Subject: Use imperative mood ("Add feature", not "Added feature"), max 50 chars.
+  - Body: Explain WHAT and WHY. Wrap lines at 72 characters.
 - CHANGES_REQUESTED ONLY for serious issues: security vulnerabilities, data loss risk, resource leaks, crashes under normal usage
 - Do NOT request changes for style preferences, minor refactoring, or theoretical edge cases
 - blocking_issues must reference specific file paths and function names from the diff

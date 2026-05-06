@@ -1,5 +1,5 @@
 """
-config.py — centralna konfiguracja orkiestratora
+config.py — central orchestrator configuration
 """
 
 import os
@@ -10,12 +10,12 @@ from pathlib import Path
 
 
 def _find_bin(name: str, extra_paths: list[str] = None) -> str:
-    """Szuka binarki w PATH, a potem w znanych lokalizacjach (nvm, local bins)."""
+    """Searches for a binary in PATH, then in known locations (nvm, local bins)."""
     found = shutil.which(name)
     if found:
         return found
     candidates = extra_paths or []
-    # Wspólne lokalizacje nvm / npm global dla wszystkich userów w /home
+    # Common nvm / npm global locations for all users in /home
     home_dirs = list(Path("/home").iterdir()) if Path("/home").exists() else []
     for home in home_dirs:
         nvm_base = home / ".nvm" / "versions" / "node"
@@ -27,11 +27,11 @@ def _find_bin(name: str, extra_paths: list[str] = None) -> str:
     for path in candidates:
         if Path(path).is_file():
             return path
-    return name  # fallback — zwróci oryginalną nazwę, subprocess rzuci czytelny błąd
+    return name  # fallback — return original name, subprocess will raise a readable error
 
 
 def _find_project_root() -> Path:
-    """Wykrywa root projektu (git top-level) lub zwraca CWD."""
+    """Detects the project root (git top-level) or returns CWD."""
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
@@ -46,27 +46,27 @@ def _find_project_root() -> Path:
 
 @dataclass
 class OrchestratorConfig:
-    # --- Ścieżki (automatycznie wykrywa root projektu) ---
+    # --- Paths (automatically detects project root) ---
     base_dir: Path = field(default_factory=_find_project_root)
     runs_dir: Path = field(default=None)
     db_path: Path = field(default=None)
 
-    # --- Limity pętli ---
-    max_iterations: int = 6          # max rund IMPLEMENTING → REVIEWING
-    max_stuck_rounds: int = 2        # ile rund bez diff zanim STUCK
-    min_diff_lines: int = 1          # minimalna zmiana linii żeby nie być "stuck"
+    # --- Loop limits ---
+    max_iterations: int = 6          # max IMPLEMENTING → REVIEWING rounds
+    max_stuck_rounds: int = 2        # how many rounds without diff before STUCK
+    min_diff_lines: int = 1          # minimal lines changed not to be "stuck"
 
-    # --- Timeouty (sekundy) ---
-    claude_timeout: int = 300        # 5 min na architekturę / review
-    gemini_timeout: int = 1200        # 10 min na implementację
+    # --- Timeouts (seconds) ---
+    claude_timeout: int = 300        # 5 min for architecture / review
+    gemini_timeout: int = 1200        # 10 min for implementation
 
     # --- Retry ---
     agent_max_retries: int = 3
-    agent_retry_delay: float = 5.0   # sekundy między retry
+    agent_retry_delay: float = 5.0   # seconds between retries
 
     # --- Claude Code CLI ---
     claude_bin: str = field(default_factory=lambda: _find_bin("claude"))
-    claude_model: str = "claude-opus-4-5"   # opcjonalnie, jeśli chcesz wymusić model
+    claude_model: str = "claude-opus-4-5"   # optionally, if you want to force a model
 
     # --- Gemini CLI ---
     gemini_bin: str = field(default_factory=lambda: _find_bin("gemini"))
@@ -78,28 +78,32 @@ class OrchestratorConfig:
     developer_role: str = "gemini"
     reviewer_role: str = "gemini"
 
+    # --- Phase options ---
+    use_analyzer: bool = False       # whether to run an additional code analysis phase
+
+
     # --- Git ---
-    use_git: bool = True             # czy robić git diff między iteracjami
+    use_git: bool = True             # whether to perform git diff between iterations
     git_bin: str = "git"
 
-    # --- Logowanie ---
+    # --- Logging ---
     log_level: str = "INFO"          # DEBUG | INFO | WARNING | ERROR
     log_to_file: bool = True
 
     def __post_init__(self):
-        """Inicjalizuje ścieżki zależne od base_dir."""
+        """Initializes paths dependent on base_dir."""
         if self.runs_dir is None:
             self.runs_dir = self.base_dir / ".orchestrator" / "runs"
         if self.db_path is None:
             self.db_path = self.base_dir / ".orchestrator" / "orchestrator.db"
 
 
-# Singleton – importuj tę instancję wszędzie
+# Singleton – import this instance everywhere
 config = OrchestratorConfig()
 
 
 def override_from_env() -> None:
-    """Nadpisz config ze zmiennych środowiskowych (opcjonalne)."""
+    """Override config from environment variables (optional)."""
     if v := os.getenv("ORCH_MAX_ITERATIONS"):
         config.max_iterations = int(v)
     if v := os.getenv("ORCH_CLAUDE_TIMEOUT"):
@@ -124,3 +128,4 @@ def override_from_env() -> None:
         config.developer_role = v
     if v := os.getenv("ORCH_REVIEWER_ROLE"):
         config.reviewer_role = v
+
