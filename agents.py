@@ -8,9 +8,11 @@ Każde wywołanie:
   - zwraca ustrukturyzowany wynik
 """
 
+import io
 import json
 import logging
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,25 +50,56 @@ class AgentResult:
 class BaseAgent:
     name: str = "agent"
 
-    def _run_subprocess(
+    def _run_subprocess_streaming(
         self,
         cmd: list[str],
         cwd: Optional[Path],
         timeout: int,
     ) -> tuple[str, str, int]:
-        """Uruchamia subprocess i zwraca (stdout, stderr, returncode)."""
+        """Uruchamia subprocess ze strumieniowaniem logów w czasie rzeczywistym."""
         logger.debug(f"[{self.name}] CMD: {' '.join(cmd[:4])}...")
+        
+        stdout_lines = []
+        stderr_lines = []
+        
+        # Używamy Popen zamiast run, aby móc czytać strumienie w locie
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=str(cwd) if cwd else None,
+            bufsize=1,  # line buffered
+            universal_newlines=True
+        )
+
+        def read_stream(stream: io.TextIOBase, target_list: list, is_stderr: bool):
+            for line in stream:
+                line_stripped = line.rstrip()
+                target_list.append(line)
+                # Logujemy każdą linijkę w czasie rzeczywistym
+                log_prefix = f"[{self.name}][ERR]" if is_stderr else f"[{self.name}]"
+                logger.info(f"{log_prefix} {line_stripped}")
+
+        # Wątki do czytania stdout i stderr równolegle
+        t1 = threading.Thread(target=read_stream, args=(proc.stdout, stdout_lines, False))
+        t2 = threading.Thread(target=read_stream, args=(proc.stderr, stderr_lines, True))
+        t1.start()
+        t2.start()
+
         try:
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                cwd=str(cwd) if cwd else None,
-            )
-            return proc.stdout.strip(), proc.stderr.strip(), proc.returncode
+            # Czekamy na zakończenie procesu z timeoutem
+            return_code = proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
+            proc.kill()
+            t1.join()
+            t2.join()
             raise TimeoutError(f"[{self.name}] Timeout after {timeout}s")
+
+        t1.join()
+        t2.join()
+        
+        return "".join(stdout_lines), "".join(stderr_lines), return_code
 
     def _parse_json(self, raw: str) -> Optional[dict | list]:
         """Próbuje sparsować JSON — odporna na markdown fences."""
@@ -117,7 +150,7 @@ class BaseAgent:
         for attempt in range(1, config.agent_max_retries + 1):
             start = time.monotonic()
             try:
-                stdout, stderr, code = self._run_subprocess(cmd, cwd, timeout)
+                stdout, stderr, code = self._run_subprocess_streaming(cmd, cwd, timeout)
                 duration = time.monotonic() - start
 
                 if code != 0:
@@ -177,29 +210,40 @@ class ClaudeAgent(BaseAgent):
     ) -> AgentResult:
         """
         Wywołuje `claude --print --output-format json`.
-        Rozpakowuje kopertę CLI: {"result": "...", "is_error": false, ...}
-        expect_json=True → waliduje i parsuje JSON z pola result.
+        Używa pliku tymczasowego na prompt, aby uniknąć limitów argumentów CLI.
         """
         effective_timeout = timeout or config.claude_timeout
+
+        # Zapisz prompt do pliku tymczasowego
+        temp_dir = config.base_dir / ".orchestrator"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        prompt_file = temp_dir / f"prompt_claude_{int(time.time())}.txt"
+        prompt_file.write_text(prompt, encoding="utf-8")
+
+        # Polecenie dla Claude, aby przeczytał plik i wykonał zadanie
+        instruction = f"Read and execute instructions from file: {prompt_file}. Respond with ONLY the required JSON."
 
         cmd = [
             config.claude_bin,
             "--print",
             "--output-format", "json",
-            prompt,
+            instruction,
         ]
 
         logger.info(
-            f"[claude] Calling Claude Code "
+            f"[claude] Calling Claude Code via prompt file "
             f"(timeout={effective_timeout}s, json={expect_json})"
         )
 
-        # expect_json=False — walidację robimy sami po rozpakowaniu koperty
         raw = self._call_with_retry(cmd, cwd, effective_timeout, expect_json=False)
+        
+        # Usuń plik po użyciu
+        try: prompt_file.unlink()
+        except: pass
+
         if not raw.success:
             return raw
 
-        # Claude CLI zawija odpowiedź w kopertę JSON: {"result": "...", "is_error": false, ...}
         envelope = self._parse_json(raw.raw_output)
         if not isinstance(envelope, dict):
             return AgentResult(
@@ -287,25 +331,34 @@ class GeminiAgent(BaseAgent):
         expect_json: bool = False,
         timeout: Optional[int] = None,
     ) -> AgentResult:
-        """
-        Wywołuje Gemini CLI z podanym promptem.
-        expect_json=False (default): Gemini pisze do plików, output jest surowy.
-        expect_json=True: oczekuj JSON w stdout (np. gdy Gemini pełni rolę architekta/reviewera).
-        """
+        """Wywołuje Gemini CLI przez plik tymczasowy na prompt."""
         effective_timeout = timeout or config.gemini_timeout
 
-        # Gemini CLI — dostosuj flagę jeśli twój CLI ma inną składnię
+        # Zapisz prompt do pliku tymczasowego
+        temp_dir = config.base_dir / ".orchestrator"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        prompt_file = temp_dir / f"prompt_gemini_{int(time.time())}.txt"
+        prompt_file.write_text(prompt, encoding="utf-8")
+
+        instruction = f"Read and execute instructions from file: {prompt_file}"
+
         cmd = [
             config.gemini_bin,
-            "--prompt", prompt,
-            "--yolo",          # auto-accept file changes (dostosuj do swojego CLI)
+            "--prompt", instruction,
+            "--yolo",
         ]
 
         logger.info(
-            f"[gemini] Calling Gemini CLI "
+            f"[gemini] Calling Gemini CLI via prompt file "
             f"(timeout={effective_timeout}s, json={expect_json}, cwd={cwd})"
         )
-        return self._call_with_retry(cmd, cwd, effective_timeout, expect_json=expect_json)
+        res = self._call_with_retry(cmd, cwd, effective_timeout, expect_json=expect_json)
+        
+        # Usuń plik po użyciu
+        try: prompt_file.unlink()
+        except: pass
+
+        return res
 
 
 # ─────────────────────────────────────────────

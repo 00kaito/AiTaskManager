@@ -22,7 +22,7 @@ You are a senior software architect. Your job is to create a precise implementat
 
 ## Current codebase context
 {codebase_summary}
-
+Use Serena tools when applicable
 ## Your output — respond with ONLY valid JSON, no markdown fences, no explanation
 
 {{

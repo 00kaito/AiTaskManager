@@ -361,9 +361,11 @@ class Orchestrator:
             task.task_start_sha = self.git.get_current_sha()
             logger.info(f"Task start SHA: {task.task_start_sha[:8] or 'none'}")
 
+        logger.info("Preparing codebase summary for Architect...")
         codebase = build_codebase_summary(self.project_root)
         prompt = architect_prompt(task.description, codebase)
 
+        logger.info(f"Requesting implementation plan from {config.architect_role}...")
         result = self.architect.call(prompt, expect_json=True)
         if not result.success:
             logger.error(f"[{config.architect_role}] ARCHITECTING failed: {result.error}")
@@ -466,7 +468,7 @@ class Orchestrator:
             fix_context=fix_context,
         )
 
-        run_dir = config.runs_dir / task.task_id
+        logger.info(f"Calling developer agent ({config.developer_role}) to apply changes...")
         result = self.developer.call(prompt, cwd=self.project_root, expect_json=False)
         if not result.success:
             logger.error(f"[{config.developer_role}] IMPLEMENTING failed: {result.error}")
@@ -474,6 +476,7 @@ class Orchestrator:
             return task
 
         # Sprawdź diff
+        logger.info("Analyzing changes made by developer...")
         diff_stat, lines_changed = ("no git", 0)
         diff_full = ""
         if self.git:
@@ -639,9 +642,7 @@ class Orchestrator:
             f"[{task.task_id}] Phase: REVIEWING (iteration {task.iteration})"
         )
 
-        run_dir = config.runs_dir / task.task_id
         impl_report_path = self.project_root / "implementation_report.md"
-
         impl_report = ""
         if impl_report_path.exists():
             impl_report = impl_report_path.read_text(encoding="utf-8")
@@ -670,6 +671,7 @@ class Orchestrator:
                 iteration=task.iteration,
             )
 
+        logger.info(f"Requesting review from {config.reviewer_role}...")
         result = self.reviewer.call(prompt, expect_json=True)
         if not result.success:
             logger.error(f"[{config.reviewer_role}] REVIEWING failed: {result.error}")
