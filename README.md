@@ -1,4 +1,4 @@
-# AI Task Orchestrator (v2.0)
+# AI Task Orchestrator (v2.1)
 
 A stateful task orchestrator working with **Claude Code** and **Gemini CLI**.  
 Automates the full development lifecycle: **Architecture → Implementation → Review → Iteration → Success**.
@@ -11,9 +11,18 @@ The tool is **completely project-independent** — install it once and use it in
 
 The orchestrator manages three specialized AI agent roles:
 
-1.  **Architect (Claude/Gemini)**: Analyzes the codebase, creates a detailed implementation plan in JSON format, and defines verifiable acceptance criteria.
-2.  **Developer (Gemini/Claude)**: Receives the plan and modifies project files. The developer has permissions to edit code, create new files, and delete old ones. After each iteration, it generates an `implementation_report.md`.
-3.  **Reviewer (Claude/Gemini)**: Checks the diff of changes against the acceptance criteria. If everything is ready — approves (`APPROVED`). If not — returns the task for fixes (`CHANGES_REQUESTED`) with specific feedback.
+1.  **Architect**: Analyzes the codebase, creates a detailed implementation plan in JSON format, and defines verifiable acceptance criteria.
+2.  **Developer**: Receives the plan and modifies project files. The developer has permissions to edit code, create new files, and delete old ones. After each iteration, it generates an `implementation_report.md`.
+3.  **Reviewer**: Checks the diff of changes against the acceptance criteria. If everything is ready — approves (`APPROVED`). If not — returns the task for fixes (`CHANGES_REQUESTED`) with specific feedback.
+
+### 🧩 Modern Architecture: Runtime vs Model Split
+
+The orchestrator decouples **how** an agent interacts with your system from **which** AI model powers it.
+
+*   **Agent Runtime**: The "body" of the agent. It defines the tool used to execute tasks (e.g., `claude` CLI, `gemini` CLI). Runtimes handle file operations, command execution, and response parsing.
+*   **Model Endpoint**: The "brain" of the agent. It specifies the LLM version (e.g., `claude-3-7-sonnet-latest`, `gemini-2.0-pro-exp-02-05`).
+
+This allows you to mix and match tools and models, providing maximum flexibility and future-proofing (e.g., for `aider` integration).
 
 ---
 
