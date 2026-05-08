@@ -17,7 +17,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from agents import ClaudeAgent, GeminiAgent, GitHelper, create_agent
+from agents import GitHelper, create_agent
 from config import config, override_from_env
 from prompts import (
     architect_prompt,
@@ -259,18 +259,18 @@ class Orchestrator:
         # If not provided, use the detected project root (git root or CWD)
         self.project_root = project_root or config.base_dir
         self.repo = TaskRepository()
-        self.architect = create_agent(config.architect_role)
-        self.analyzer = create_agent(config.analyzer_role)
-        self.developer = create_agent(config.developer_role)
-        self.reviewer = create_agent(config.reviewer_role)
+        self.architect = create_agent(config.architect_runtime, config.architect_model)
+        self.analyzer = create_agent(config.analyzer_runtime, config.analyzer_model)
+        self.developer = create_agent(config.developer_runtime, config.developer_model)
+        self.reviewer = create_agent(config.reviewer_runtime, config.reviewer_model)
         self.git = GitHelper(self.project_root) if config.use_git else None
         self.human_review = human_review
         self.conv_log: ConversationLogger | None = None
 
         logger.info(
             f"Project root set to: {self.project_root} | "
-            f"roles: architect={config.architect_role}, "
-            f"developer={config.developer_role}, reviewer={config.reviewer_role}"
+            f"roles: architect={self.architect.name}, "
+            f"developer={self.developer.name}, reviewer={self.reviewer.name}"
         )
         if human_review:
             logger.info("Human-review mode enabled")
@@ -366,10 +366,10 @@ class Orchestrator:
         codebase = build_codebase_summary(self.project_root)
         prompt = architect_prompt(task.description, codebase)
 
-        logger.info(f"Requesting implementation plan from {config.architect_role}...")
+        logger.info(f"Requesting implementation plan from {self.architect.name}...")
         result = self.architect.call(prompt, expect_json=True)
         if not result.success:
-            logger.error(f"[{config.architect_role}] ARCHITECTING failed: {result.error}")
+            logger.error(f"[{self.architect.name}] ARCHITECTING failed: {result.error}")
             task.status = TaskStatus.FAILED
             return task
 
@@ -423,7 +423,7 @@ class Orchestrator:
 
         result = self.analyzer.call(prompt, cwd=self.project_root, expect_json=True)
         if not result.success:
-            logger.error(f"[{config.analyzer_role}] ANALYZING failed: {result.error}")
+            logger.error(f"[{self.analyzer.name}] ANALYZING failed: {result.error}")
             task.status = TaskStatus.FAILED
             return task
 
@@ -474,10 +474,10 @@ class Orchestrator:
             fix_context=fix_context,
         )
 
-        logger.info(f"Calling developer agent ({config.developer_role}) to apply changes...")
+        logger.info(f"Calling developer agent ({self.developer.name}) to apply changes...")
         result = self.developer.call(prompt, cwd=self.project_root, expect_json=False)
         if not result.success:
-            logger.error(f"[{config.developer_role}] IMPLEMENTING failed: {result.error}")
+            logger.error(f"[{self.developer.name}] IMPLEMENTING failed: {result.error}")
             task.status = TaskStatus.FAILED
             return task
 
@@ -507,7 +507,7 @@ class Orchestrator:
             # Auto-commit dla audytu
             if config.use_git:
                 self.git.stage_and_commit(
-                    f"[{task.task_id}] iter {task.iteration} — {config.developer_role} implementation"
+                    f"[{task.task_id}] iter {task.iteration} — {self.developer.name} implementation"
                 )
 
         if self.conv_log:
@@ -605,7 +605,7 @@ class Orchestrator:
 
         result = self.reviewer.call(prompt, expect_json=True)
         if not result.success:
-            logger.error(f"[{config.reviewer_role}] HUMAN_FEEDBACK failed: {result.error}")
+            logger.error(f"[{self.reviewer.name}] HUMAN_FEEDBACK failed: {result.error}")
             task.status = TaskStatus.FAILED
             return task
 
@@ -677,10 +677,10 @@ class Orchestrator:
                 iteration=task.iteration,
             )
 
-        logger.info(f"Requesting review from {config.reviewer_role}...")
+        logger.info(f"Requesting review from {self.reviewer.name}...")
         result = self.reviewer.call(prompt, expect_json=True)
         if not result.success:
-            logger.error(f"[{config.reviewer_role}] REVIEWING failed: {result.error}")
+            logger.error(f"[{self.reviewer.name}] REVIEWING failed: {result.error}")
             task.status = TaskStatus.FAILED
             return task
 
@@ -956,16 +956,43 @@ def main() -> None:
     p_run.add_argument("task_id", help="ID of the task to run")
     p_run.add_argument("--human-review", action="store_true", help="Enable human review phase")
     p_run.add_argument("--analyze", action="store_true", help="Enable deep analysis phase")
-    p_run.add_argument("--architect", help="Set architect role (claude|gemini)")
-    p_run.add_argument("--analyzer", help="Set analyzer role (claude|gemini)")
-    p_run.add_argument("--developer", help="Set developer role (claude|gemini)")
-    p_run.add_argument("--reviewer", help="Set reviewer role (claude|gemini)")
+    p_run.add_argument("--architect", help="Set architect runtime (alias for --architect-runtime)")
+    p_run.add_argument("--architect-runtime", help="Set architect runtime (claude|gemini)")
+    p_run.add_argument("--architect-model", help="Set architect model ID")
+    
+    p_run.add_argument("--analyzer", help="Set analyzer runtime (alias for --analyzer-runtime)")
+    p_run.add_argument("--analyzer-runtime", help="Set analyzer runtime (claude|gemini)")
+    p_run.add_argument("--analyzer-model", help="Set analyzer model ID")
+    
+    p_run.add_argument("--developer", help="Set developer runtime (alias for --developer-runtime)")
+    p_run.add_argument("--developer-runtime", help="Set developer runtime (claude|gemini)")
+    p_run.add_argument("--developer-model", help="Set developer model ID")
+    
+    p_run.add_argument("--reviewer", help="Set reviewer runtime (alias for --reviewer-runtime)")
+    p_run.add_argument("--reviewer-runtime", help="Set reviewer runtime (claude|gemini)")
+    p_run.add_argument("--reviewer-model", help="Set reviewer model ID")
 
     def run_handler(args):
-        if args.architect: config.architect_role = args.architect
-        if args.analyzer: config.analyzer_role = args.analyzer
-        if args.developer: config.developer_role = args.developer
-        if args.reviewer: config.reviewer_role = args.reviewer
+        # Architect
+        if args.architect: config.architect_runtime = args.architect
+        if args.architect_runtime: config.architect_runtime = args.architect_runtime
+        if args.architect_model: config.architect_model = args.architect_model
+        
+        # Analyzer
+        if args.analyzer: config.analyzer_runtime = args.analyzer
+        if args.analyzer_runtime: config.analyzer_runtime = args.analyzer_runtime
+        if args.analyzer_model: config.analyzer_model = args.analyzer_model
+        
+        # Developer
+        if args.developer: config.developer_runtime = args.developer
+        if args.developer_runtime: config.developer_runtime = args.developer_runtime
+        if args.developer_model: config.developer_model = args.developer_model
+        
+        # Reviewer
+        if args.reviewer: config.reviewer_runtime = args.reviewer
+        if args.reviewer_runtime: config.reviewer_runtime = args.reviewer_runtime
+        if args.reviewer_model: config.reviewer_model = args.reviewer_model
+
         if args.analyze: config.use_analyzer = True
         cmd_run(args.task_id, human_review=args.human_review)
 

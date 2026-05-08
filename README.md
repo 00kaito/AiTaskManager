@@ -132,9 +132,28 @@ An isolated data directory is created in each project:
 
 You can override default settings:
 - `ORCH_MAX_ITERATIONS`: Round limit (default 6).
-- `ORCH_ARCHITECT_ROLE`: Model for the architect (`claude` | `gemini`).
-- `ORCH_DEVELOPER_ROLE`: Model for the developer (`claude` | `gemini`).
+- `ORCH_ARCHITECT_RUNTIME`: Runtime for the architect (`claude` | `gemini`).
+- `ORCH_ARCHITECT_MODEL`: Specific model ID for the architect.
+- `ORCH_DEVELOPER_RUNTIME`: Runtime for the developer.
+- `ORCH_DEVELOPER_MODEL`: Model ID for the developer.
 - `ORCH_USE_GIT`: Whether to make automatic commits (default true).
+
+### Role Selection (Runtime & Model)
+
+The orchestrator separates the **runtime** (the tool used to call the AI) from the **model** (the specific LLM version).
+
+- **Runtime**: `claude` (uses Claude Code CLI), `gemini` (uses Gemini CLI).
+- **Model**: Specific ID like `claude-3-7-sonnet-latest`, `gemini-2.0-pro-exp-02-05`, etc.
+
+You can set these via CLI flags:
+```bash
+orch run TASK-XXXXXX --architect-runtime claude --architect-model claude-3-7-sonnet-latest
+```
+Or via environment variables:
+```bash
+ORCH_ARCHITECT_RUNTIME=claude ORCH_ARCHITECT_MODEL=claude-3-7-sonnet-latest orch run TASK-XXXXXX
+```
+The old `ORCH_ARCHITECT_ROLE` and `--architect` flags still work as aliases for the runtime.
 
 Example:
 ```bash

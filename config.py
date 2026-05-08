@@ -7,6 +7,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
 
 
 def _find_bin(name: str, extra_paths: list[str] = None) -> str:
@@ -72,11 +73,39 @@ class OrchestratorConfig:
     gemini_bin: str = field(default_factory=lambda: _find_bin("gemini"))
     gemini_model: str = "gemini-2.5-pro"
 
-    # --- Role assignment: "claude" or "gemini" ---
-    architect_role: str = "gemini"
-    analyzer_role: str = "gemini"
-    developer_role: str = "gemini"
-    reviewer_role: str = "gemini"
+    # --- Role assignment: runtime ('claude', 'gemini') and model_id ---
+    architect_runtime: str = "gemini"
+    architect_model: Optional[str] = None
+    
+    analyzer_runtime: str = "gemini"
+    analyzer_model: Optional[str] = None
+    
+    developer_runtime: str = "gemini"
+    developer_model: Optional[str] = None
+    
+    reviewer_runtime: str = "gemini"
+    reviewer_model: Optional[str] = None
+
+    # --- Backwards compatibility aliases ---
+    @property
+    def architect_role(self) -> str: return self.architect_runtime
+    @architect_role.setter
+    def architect_role(self, v: str): self.architect_runtime = v
+
+    @property
+    def analyzer_role(self) -> str: return self.analyzer_runtime
+    @analyzer_role.setter
+    def analyzer_role(self, v: str): self.analyzer_runtime = v
+
+    @property
+    def developer_role(self) -> str: return self.developer_runtime
+    @developer_role.setter
+    def developer_role(self, v: str): self.developer_runtime = v
+
+    @property
+    def reviewer_role(self) -> str: return self.reviewer_runtime
+    @reviewer_role.setter
+    def reviewer_role(self, v: str): self.reviewer_runtime = v
 
     # --- Phase options ---
     use_analyzer: bool = False       # whether to run an additional code analysis phase
@@ -120,12 +149,19 @@ def override_from_env() -> None:
         config.gemini_bin = v
     if v := os.getenv("ORCH_CLAUDE_BIN"):
         config.claude_bin = v
-    if v := os.getenv("ORCH_ARCHITECT_ROLE"):
-        config.architect_role = v
-    if v := os.getenv("ORCH_ANALYZER_ROLE"):
-        config.analyzer_role = v
-    if v := os.getenv("ORCH_DEVELOPER_ROLE"):
-        config.developer_role = v
-    if v := os.getenv("ORCH_REVIEWER_ROLE"):
-        config.reviewer_role = v
+    # New runtime/model env vars
+    if v := os.getenv("ORCH_ARCHITECT_RUNTIME"): config.architect_runtime = v
+    if v := os.getenv("ORCH_ARCHITECT_MODEL"): config.architect_model = v
+    if v := os.getenv("ORCH_ANALYZER_RUNTIME"): config.analyzer_runtime = v
+    if v := os.getenv("ORCH_ANALYZER_MODEL"): config.analyzer_model = v
+    if v := os.getenv("ORCH_DEVELOPER_RUNTIME"): config.developer_runtime = v
+    if v := os.getenv("ORCH_DEVELOPER_MODEL"): config.developer_model = v
+    if v := os.getenv("ORCH_REVIEWER_RUNTIME"): config.reviewer_runtime = v
+    if v := os.getenv("ORCH_REVIEWER_MODEL"): config.reviewer_model = v
+
+    # Backwards compatibility env vars
+    if v := os.getenv("ORCH_ARCHITECT_ROLE"): config.architect_runtime = v
+    if v := os.getenv("ORCH_ANALYZER_ROLE"): config.analyzer_runtime = v
+    if v := os.getenv("ORCH_DEVELOPER_ROLE"): config.developer_runtime = v
+    if v := os.getenv("ORCH_REVIEWER_ROLE"): config.reviewer_runtime = v
 

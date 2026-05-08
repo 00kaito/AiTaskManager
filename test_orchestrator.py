@@ -16,7 +16,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from agents import AgentResult, BaseAgent, GitHelper
+from agents import AgentResult, BaseAgent, AgentRuntime, ModelEndpoint, GitHelper, create_agent
 from config import OrchestratorConfig, config
 from prompts import architect_prompt, implement_prompt, review_prompt
 from runner import Orchestrator
@@ -167,7 +167,8 @@ class TestTaskModel:
 class TestAgentJsonParsing:
 
     def setup_method(self):
-        self.agent = BaseAgent()
+        # Parsing logic lives on AgentRuntime now.
+        self.agent = AgentRuntime()
 
     def test_clean_json(self):
         result = self.agent._parse_json('{"key": "value"}')
@@ -196,6 +197,27 @@ class TestAgentJsonParsing:
         raw = '{"criteria": [{"id": "c1", "status": "DONE"}]}'
         result = self.agent._parse_json(raw)
         assert result["criteria"][0]["status"] == "DONE"
+
+
+class TestAgentFactory:
+
+    def test_create_agent_runtime_model_split(self):
+        agent = create_agent("gemini", "gemini-2.5-flash")
+        assert isinstance(agent, BaseAgent)
+        assert agent.runtime.name == "gemini"
+        assert agent.model.model_id == "gemini-2.5-flash"
+        assert agent.name == "gemini/gemini-2.5-flash"
+
+    def test_create_agent_legacy_signature(self):
+        agent = create_agent("claude")
+        assert isinstance(agent, BaseAgent)
+        assert agent.runtime.name == "claude"
+        assert agent.model.model_id == config.claude_model
+        assert agent.name == f"claude/{config.claude_model}"
+
+    def test_create_agent_invalid_runtime(self):
+        with pytest.raises(ValueError, match="Unknown runtime"):
+            create_agent("nonexistent")
 
 
 # ─────────────────────────────────────────────
@@ -323,10 +345,11 @@ class TestOrchestratorFlow:
             r = claude_responses[claude_call_count[0]]
             claude_call_count[0] += 1
             return r
-        orch.claude.call = mock_claude_call
+        orch.architect.call = mock_claude_call
+        orch.reviewer.call = mock_claude_call
 
         # Mock Gemini
-        orch.gemini.call = MagicMock(return_value=AgentResult(
+        orch.developer.call = MagicMock(return_value=AgentResult(
             success=True, raw_output="Done"
         ))
 
@@ -353,8 +376,9 @@ class TestOrchestratorFlow:
             r = claude_responses[idx[0]]
             idx[0] += 1
             return r
-        orch.claude.call = mock_claude
-        orch.gemini.call = MagicMock(return_value=AgentResult(success=True, raw_output="Done"))
+        orch.architect.call = mock_claude
+        orch.reviewer.call = mock_claude
+        orch.developer.call = MagicMock(return_value=AgentResult(success=True, raw_output="Done"))
 
         task = orch.create_task("Refactor parser with tests")
         task = orch.run(task.task_id)
@@ -371,14 +395,16 @@ class TestOrchestratorFlow:
             raw_output=MOCK_REVIEW_CHANGES,
             parsed=json.loads(MOCK_REVIEW_CHANGES),
         )
-        orch.claude.call = MagicMock(side_effect=[
+        mock_claude = MagicMock(side_effect=[
             AgentResult(success=True, raw_output=MOCK_ARCHITECT_RESPONSE,
                         parsed=json.loads(MOCK_ARCHITECT_RESPONSE)),
             always_changes,
             always_changes,
             always_changes,
         ])
-        orch.gemini.call = MagicMock(return_value=AgentResult(success=True, raw_output="Done"))
+        orch.architect.call = mock_claude
+        orch.reviewer.call = mock_claude
+        orch.developer.call = MagicMock(return_value=AgentResult(success=True, raw_output="Done"))
 
         task = orch.create_task("Impossible task")
         task = orch.run(task.task_id)
@@ -387,7 +413,7 @@ class TestOrchestratorFlow:
 
     def test_claude_failure_sets_failed(self, tmp_config, tmp_dir):
         orch = self._make_orch(tmp_config, tmp_dir)
-        orch.claude.call = MagicMock(return_value=AgentResult(
+        orch.architect.call = MagicMock(return_value=AgentResult(
             success=False, error="API error"
         ))
         task = orch.create_task("Task that will fail")
@@ -396,13 +422,15 @@ class TestOrchestratorFlow:
 
     def test_artifacts_written(self, tmp_config, tmp_dir):
         orch = self._make_orch(tmp_config, tmp_dir)
-        orch.claude.call = MagicMock(side_effect=[
+        mock_claude = MagicMock(side_effect=[
             AgentResult(success=True, raw_output=MOCK_ARCHITECT_RESPONSE,
                         parsed=json.loads(MOCK_ARCHITECT_RESPONSE)),
             AgentResult(success=True, raw_output=MOCK_REVIEW_APPROVED,
                         parsed=json.loads(MOCK_REVIEW_APPROVED)),
         ])
-        orch.gemini.call = MagicMock(return_value=AgentResult(success=True, raw_output="Done"))
+        orch.architect.call = mock_claude
+        orch.reviewer.call = mock_claude
+        orch.developer.call = MagicMock(return_value=AgentResult(success=True, raw_output="Done"))
 
         task = orch.create_task("Check artifacts")
         task = orch.run(task.task_id)

@@ -14,7 +14,7 @@ import logging
 import subprocess
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -43,12 +43,80 @@ class AgentResult:
         raise ValueError(f"No parsed JSON. Raw output: {self.raw_output[:500]}")
 
 
+@dataclass(frozen=True)
+class ModelEndpoint:
+    provider: str  # "anthropic" | "google" | "ollama" | "litellm"
+    model_id: str
+    base_url: Optional[str] = None
+    extra_args: dict = field(default_factory=dict)
+
+
 # ─────────────────────────────────────────────
 # Base agent class
 # ─────────────────────────────────────────────
 
-class BaseAgent:
-    name: str = "agent"
+class AgentRuntime:
+    """
+    Template-method base. A concrete runtime supplies:
+      - build_command(model, instruction) -> list[str]   (required)
+      - post_process(raw, expect_json) -> AgentResult    (optional; default: return raw)
+
+    Shared logic (subprocess streaming, retry, JSON parsing, prompt-file
+    handling) lives here. New runtimes should not duplicate any of it.
+    """
+    name: str = "runtime"
+    default_timeout: int = 300
+    prompt_prefix: str = "agent"
+
+    def build_command(self, model: ModelEndpoint, instruction: str) -> list[str]:
+        raise NotImplementedError
+
+    def post_process(self, raw: AgentResult, expect_json: bool) -> AgentResult:
+        return raw
+
+    # Override to True when stdout is wrapped in a runtime envelope (e.g. Claude
+    # Code emits JSON envelope around the model's reply). The base retry loop
+    # then validates the envelope, not the model's payload, on every attempt.
+    retry_validates_stdout_json: bool = False
+
+    def invoke(
+        self,
+        prompt: str,
+        model: ModelEndpoint,
+        cwd: Optional[Path] = None,
+        expect_json: bool = True,
+        timeout: Optional[int] = None,
+    ) -> AgentResult:
+        effective_timeout = timeout or self.default_timeout
+        prompt_file, instruction = self._prepare_prompt_file(prompt)
+        try:
+            cmd = self.build_command(model, instruction)
+            logger.info(
+                f"[{self.name}] invoke (model={model.model_id}, "
+                f"timeout={effective_timeout}s, json={expect_json}, cwd={cwd})"
+            )
+            retry_expect_json = self.retry_validates_stdout_json or expect_json
+            raw = self._call_with_retry(cmd, cwd, effective_timeout, expect_json=retry_expect_json)
+            if not raw.success:
+                return raw
+            return self.post_process(raw, expect_json=expect_json)
+        finally:
+            self._cleanup_prompt_file(prompt_file)
+
+    def _prepare_prompt_file(self, prompt: str) -> tuple[Path, str]:
+        temp_dir = config.base_dir / ".orchestrator"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        prompt_file = temp_dir / f"prompt_{self.prompt_prefix}_{int(time.time())}.txt"
+        prompt_file.write_text(prompt, encoding="utf-8")
+        instruction = f"Read and execute instructions from file: {prompt_file}"
+        return prompt_file, instruction
+
+    @staticmethod
+    def _cleanup_prompt_file(prompt_file: Path) -> None:
+        try:
+            prompt_file.unlink()
+        except Exception:
+            pass
 
     def _run_subprocess_streaming(
         self,
@@ -194,12 +262,14 @@ class BaseAgent:
         )
 
 
-# ─────────────────────────────────────────────
-# Claude Code CLI
-# ─────────────────────────────────────────────
+class BaseAgent:
+    def __init__(self, runtime: AgentRuntime, model: ModelEndpoint):
+        self.runtime = runtime
+        self.model = model
 
-class ClaudeAgent(BaseAgent):
-    name = "claude"
+    @property
+    def name(self) -> str:
+        return f"{self.runtime.name}/{self.model.model_id}"
 
     def call(
         self,
@@ -208,42 +278,40 @@ class ClaudeAgent(BaseAgent):
         expect_json: bool = True,
         timeout: Optional[int] = None,
     ) -> AgentResult:
-        """
-        Calls `claude --print --output-format json`.
-        Uses a temporary file for the prompt to avoid CLI argument limits.
-        """
-        effective_timeout = timeout or config.claude_timeout
+        return self.runtime.invoke(
+            prompt=prompt,
+            model=self.model,
+            cwd=cwd,
+            expect_json=expect_json,
+            timeout=timeout
+        )
 
-        # Save prompt to temporary file
-        temp_dir = config.base_dir / ".orchestrator"
-        temp_dir.mkdir(parents=True, exist_ok=True)
-        prompt_file = temp_dir / f"prompt_claude_{int(time.time())}.txt"
-        prompt_file.write_text(prompt, encoding="utf-8")
 
-        # Instruction for Claude to read the file and execute the task
-        instruction = f"Read and execute instructions from file: {prompt_file}. Respond with ONLY the required JSON."
+# ─────────────────────────────────────────────
+# Claude Code CLI
+# ─────────────────────────────────────────────
 
-        cmd = [
+class ClaudeCodeRuntime(AgentRuntime):
+    name = "claude"
+    prompt_prefix = "claude"
+    retry_validates_stdout_json = True  # envelope is always JSON
+
+    @property
+    def default_timeout(self) -> int:
+        return config.claude_timeout
+
+    def build_command(self, model: ModelEndpoint, instruction: str) -> list[str]:
+        # Claude wraps stdout in a JSON envelope; ask it for JSON-only payload.
+        instruction = f"{instruction}. Respond with ONLY the required JSON."
+        return [
             config.claude_bin,
+            "--model", model.model_id,
             "--print",
             "--output-format", "json",
             instruction,
         ]
 
-        logger.info(
-            f"[claude] Calling Claude Code via prompt file "
-            f"(timeout={effective_timeout}s, json={expect_json})"
-        )
-
-        raw = self._call_with_retry(cmd, cwd, effective_timeout, expect_json=False)
-        
-        # Remove file after use
-        try: prompt_file.unlink()
-        except: pass
-
-        if not raw.success:
-            return raw
-
+    def post_process(self, raw: AgentResult, expect_json: bool) -> AgentResult:
         envelope = self._parse_json(raw.raw_output)
         if not isinstance(envelope, dict):
             return AgentResult(
@@ -275,7 +343,7 @@ class ClaudeAgent(BaseAgent):
 
         parsed = self._parse_json(claude_text)
         if parsed is None:
-            logger.warning(f"[claude] No JSON in response: {claude_text[:200]}")
+            logger.warning(f"[{self.name}] No JSON in response: {claude_text[:200]}")
             return AgentResult(
                 success=False,
                 error=f"Claude did not return JSON: {claude_text[:200]}",
@@ -292,87 +360,113 @@ class ClaudeAgent(BaseAgent):
             duration_sec=raw.duration_sec,
         )
 
-    def call_with_file_context(
-        self,
-        prompt: str,
-        context_files: list[Path],
-        cwd: Optional[Path] = None,
-        expect_json: bool = True,
-    ) -> AgentResult:
-        """Adds files as context via --context flag (if Claude Code supports it)."""
-        # If Claude Code doesn't have --context, embed files into the prompt
-        file_contents = []
-        for f in context_files:
-            if f.exists():
-                try:
-                    content = f.read_text(encoding="utf-8", errors="replace")
-                    file_contents.append(f"### File: {f}\n```\n{content[:3000]}\n```")
-                except Exception:
-                    pass
-
-        full_prompt = prompt
-        if file_contents:
-            full_prompt = "\n\n".join(file_contents) + "\n\n" + prompt
-
-        return self.call(full_prompt, cwd, expect_json)
-
 
 # ─────────────────────────────────────────────
 # Gemini CLI
 # ─────────────────────────────────────────────
 
-class GeminiAgent(BaseAgent):
+class GeminiCliRuntime(AgentRuntime):
     name = "gemini"
+    prompt_prefix = "gemini"
 
-    def call(
-        self,
-        prompt: str,
-        cwd: Optional[Path] = None,
-        expect_json: bool = False,
-        timeout: Optional[int] = None,
-    ) -> AgentResult:
-        """Calls Gemini CLI via temporary prompt file."""
-        effective_timeout = timeout or config.gemini_timeout
+    @property
+    def default_timeout(self) -> int:
+        return config.gemini_timeout
 
-        # Save prompt to temporary file
-        temp_dir = config.base_dir / ".orchestrator"
-        temp_dir.mkdir(parents=True, exist_ok=True)
-        prompt_file = temp_dir / f"prompt_gemini_{int(time.time())}.txt"
-        prompt_file.write_text(prompt, encoding="utf-8")
-
-        instruction = f"Read and execute instructions from file: {prompt_file}"
-
-        cmd = [
+    def build_command(self, model: ModelEndpoint, instruction: str) -> list[str]:
+        return [
             config.gemini_bin,
+            "--model", model.model_id,
             "--prompt", instruction,
             "--yolo",
         ]
 
-        logger.info(
-            f"[gemini] Calling Gemini CLI via prompt file "
-            f"(timeout={effective_timeout}s, json={expect_json}, cwd={cwd})"
+    def post_process(self, raw: AgentResult, expect_json: bool) -> AgentResult:
+        # Gemini emits the model output directly to stdout (no envelope).
+        # When the caller expects JSON, parse it now.
+        if not expect_json:
+            return raw
+        parsed = self._parse_json(raw.raw_output)
+        if parsed is None:
+            return AgentResult(
+                success=False,
+                error=f"Expected JSON but got: {raw.raw_output[:200]}",
+                raw_output=raw.raw_output,
+                attempts=raw.attempts,
+                duration_sec=raw.duration_sec,
+            )
+        return AgentResult(
+            success=True,
+            raw_output=raw.raw_output,
+            parsed=parsed,
+            attempts=raw.attempts,
+            duration_sec=raw.duration_sec,
         )
-        res = self._call_with_retry(cmd, cwd, effective_timeout, expect_json=expect_json)
-        
-        # Remove file after use
-        try: prompt_file.unlink()
-        except: pass
-
-        return res
 
 
 # ─────────────────────────────────────────────
 # Agent factory
 # ─────────────────────────────────────────────
 
-def create_agent(model: str) -> BaseAgent:
-    """Return a ClaudeAgent or GeminiAgent based on model name ('claude' or 'gemini')."""
-    model = model.strip().lower()
-    if model == "claude":
-        return ClaudeAgent()
-    if model == "gemini":
-        return GeminiAgent()
-    raise ValueError(f"Unknown model: {model!r}. Use 'claude' or 'gemini'")
+RUNTIMES = {
+    "claude": ClaudeCodeRuntime,
+    "gemini": GeminiCliRuntime,
+    # "aider": AiderRuntime,
+}
+
+def _resolve_model_endpoint(runtime: str, model: ModelEndpoint | str | None) -> ModelEndpoint:
+    if isinstance(model, ModelEndpoint):
+        return model
+    
+    # Defaults from config
+    if runtime == "claude":
+        model_id = model if isinstance(model, str) else config.claude_model
+        return ModelEndpoint(provider="anthropic", model_id=model_id)
+    elif runtime == "gemini":
+        model_id = model if isinstance(model, str) else config.gemini_model
+        return ModelEndpoint(provider="google", model_id=model_id)
+    
+    # Generic fallback
+    model_id = model if isinstance(model, str) else "unknown"
+    return ModelEndpoint(provider="unknown", model_id=model_id)
+
+def create_agent(runtime: str, model: ModelEndpoint | str | None = None) -> BaseAgent:
+    """
+    Creates an agent with a specific runtime and model.
+    runtime: 'claude' | 'gemini' | ...
+    model: ModelEndpoint, model_id string, or None (uses config default).
+    """
+    runtime_name = runtime.strip().lower()
+    if runtime_name not in RUNTIMES:
+        raise ValueError(f"Unknown runtime: {runtime_name!r}. Available: {list(RUNTIMES.keys())}")
+    
+    runtime_cls = RUNTIMES[runtime_name]
+    endpoint = _resolve_model_endpoint(runtime_name, model)
+    return BaseAgent(runtime=runtime_cls(), model=endpoint)
+
+# ─────────────────────────────────────────────
+# Hook for Aider (next task)
+# ─────────────────────────────────────────────
+
+# class AiderRuntime(AgentRuntime):
+#     """
+#     TODO: implement in the next task.
+#
+#     Only build_command (and optionally post_process) need to be supplied —
+#     the base class handles prompt-file lifecycle, retry, streaming, JSON parsing.
+#
+#     Notes for the implementer:
+#       - Aider expects litellm-style ids: f"{model.provider}/{model.model_id}"
+#         e.g. "ollama/qwen3-coder:32b" or "anthropic/claude-sonnet-4-5".
+#       - Aider edits files directly on disk and commits via git; stdout carries
+#         a status report. If we need structured output, post_process can parse it.
+#     """
+#     name = "aider"
+#     prompt_prefix = "aider"
+#
+#     def build_command(self, model: ModelEndpoint, instruction: str) -> list[str]:
+#         model_ref = f"{model.provider}/{model.model_id}"
+#         return [config.aider_bin, "--model", model_ref, "--message", instruction, "--yes"]
 
 
 # ─────────────────────────────────────────────
