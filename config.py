@@ -75,7 +75,7 @@ class OrchestratorConfig:
     gemini_model: str = "gemini-3-flash-preview"
 
     # --- Role assignment: runtime ('claude', 'gemini') and model_id ---
-    architect_runtime: str = "claude"
+    architect_runtime: str = "gemini"
     architect_model: Optional[str] = None
     
     analyzer_runtime: str = "gemini"

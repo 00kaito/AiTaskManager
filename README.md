@@ -7,22 +7,47 @@ The tool is **completely project-independent** — install it once and use it in
 
 ---
 
-## How it works?
+## Description
 
+The AI Task Orchestrator is a robust multi-agent system designed to automate complex software engineering tasks. It uses a state-machine-driven approach to coordinate different AI models and tools, ensuring that tasks are not just implemented, but also planned and verified against specific acceptance criteria.
+
+### Multi-Agent Orchestration
 The orchestrator manages three specialized AI agent roles:
 
 1.  **Architect**: Analyzes the codebase, creates a detailed implementation plan in JSON format, and defines verifiable acceptance criteria.
 2.  **Developer**: Receives the plan and modifies project files. The developer has permissions to edit code, create new files, and delete old ones. After each iteration, it generates an `implementation_report.md`.
 3.  **Reviewer**: Checks the diff of changes against the acceptance criteria. If everything is ready — approves (`APPROVED`). If not — returns the task for fixes (`CHANGES_REQUESTED`) with specific feedback.
 
+---
+
+## Architectural Overview
+
+The project follows a state-machine architecture that guides a task through several logical phases:
+
+1.  **Architecting**: The Architect agent analyzes the requirements and the codebase to produce a structured JSON plan and acceptance criteria.
+2.  **Implementing**: The Developer agent executes the plan, performing file-system operations and running commands.
+3.  **Reviewing**: The Reviewer agent compares the resulting state with the acceptance criteria.
+4.  **Awaiting Human / Human Feedback**: (Optional) If `--human-review` is enabled, the process pauses for manual verification and feedback, which is then fed back into the loop.
+
 ### 🧩 Modern Architecture: Runtime vs Model Split
 
 The orchestrator decouples **how** an agent interacts with your system from **which** AI model powers it.
 
-*   **Agent Runtime**: The "body" of the agent. It defines the tool used to execute tasks (e.g., `claude` CLI, `gemini` CLI). Runtimes handle file operations, command execution, and response parsing.
+*   **Agent Runtime**: The "body" of the agent. It defines the tool used to execute tasks (e.g., `ClaudeCodeRuntime`, `GeminiCliRuntime`). Runtimes handle file operations, command execution, and response parsing.
 *   **Model Endpoint**: The "brain" of the agent. It specifies the LLM version (e.g., `claude-3-7-sonnet-latest`, `gemini-2.0-pro-exp-02-05`).
 
-This allows you to mix and match tools and models, providing maximum flexibility and future-proofing (e.g., for `aider` integration).
+---
+
+## Core Components
+
+### `Orchestrator` (`runner.py`)
+The central engine of the application. It manages the task lifecycle, handles state transitions, coordinates agents, and manages the execution loop. It is responsible for logging conversations and writing task artifacts.
+
+### `BaseAgent` (`agents.py`)
+An abstraction layer for AI agents. It encapsulates the runtime and model, providing a consistent interface (`call` method) for the orchestrator to interact with different AI backends like Claude Code or Gemini CLI.
+
+### `TaskRepository` (`state.py`)
+Handles persistence of tasks and their history using an SQLite database. It provides methods for saving, loading, and listing tasks, ensuring that the state of the orchestration is preserved across sessions.
 
 ---
 
@@ -77,23 +102,6 @@ After following one of the above methods, the `orch` and `orch-monitor` commands
 
 ---
 
-## Main Features
-
-### 🧠 Intelligent Project Root Detection
-The orchestrator automatically locates the main project directory using `git rev-parse --show-toplevel`. This allows you to call commands from any subdirectory, and the data will always go to a shared `.orchestrator/` folder in the project root.
-
-### 👤 Human-in-the-loop (`--human-review`)
-If you want full control, run:
-```bash
-orch run TASK-XXXXXX --human-review
-```
-The orchestrator will stop after each Gemini implementation and ask you if the solution works. You can then manually test the code. If you say `fail`, Claude will analyze your feedback and prepare a fix plan for Gemini.
-
-### 📜 History and Audit (Git)
-If the project is a Git repository, the orchestrator makes an automatic commit with a description after each iteration. This allows for an easy return to any stage of the agent's work.
-
----
-
 ## CLI Commands
 
 | Command | Description |
@@ -107,17 +115,6 @@ If the project is a Git repository, the orchestrator makes an automatic commit w
 | `orch reset ID` | Clears history and restores the task to NEW state (preserving description). |
 | `orch remove ID` | Deletes a task from the database and its artifacts. |
 | `orch-monitor` | Opens the terminal dashboard (Live View). |
-
-### Task Continuation (Follow-up)
-If a task is finished but you want to change or add something based on what has already been done:
-```bash
-# Add new instructions to an existing task
-orch follow TASK-XXXXXX "Also write unit tests for the new function"
-
-# Run again - Claude will analyze the feedback and Gemini will finish the job
-orch run TASK-XXXXXX
-```
-The orchestrator will use the full task history (architect plan, previous reports, and diffs) to seamlessly continue the work.
 
 ---
 
@@ -146,25 +143,3 @@ You can override default settings:
 - `ORCH_DEVELOPER_RUNTIME`: Runtime for the developer.
 - `ORCH_DEVELOPER_MODEL`: Model ID for the developer.
 - `ORCH_USE_GIT`: Whether to make automatic commits (default true).
-
-### Role Selection (Runtime & Model)
-
-The orchestrator separates the **runtime** (the tool used to call the AI) from the **model** (the specific LLM version).
-
-- **Runtime**: `claude` (uses Claude Code CLI), `gemini` (uses Gemini CLI).
-- **Model**: Specific ID like `claude-3-7-sonnet-latest`, `gemini-2.0-pro-exp-02-05`, etc.
-
-You can set these via CLI flags:
-```bash
-orch run TASK-XXXXXX --architect-runtime claude --architect-model claude-3-7-sonnet-latest
-```
-Or via environment variables:
-```bash
-ORCH_ARCHITECT_RUNTIME=claude ORCH_ARCHITECT_MODEL=claude-3-7-sonnet-latest orch run TASK-XXXXXX
-```
-The old `ORCH_ARCHITECT_ROLE` and `--architect` flags still work as aliases for the runtime.
-
-Example:
-```bash
-ORCH_MAX_ITERATIONS=3 orch run TASK-XXXXXX
-```
