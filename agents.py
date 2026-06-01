@@ -11,6 +11,7 @@ Each call:
 import io
 import json
 import logging
+import os
 import subprocess
 import threading
 import time
@@ -130,15 +131,20 @@ class AgentRuntime:
         stdout_lines = []
         stderr_lines = []
         
+        # Windows needs shell=True for some aliases/batch files, 
+        # but list commands are safer without it unless needed.
+        use_shell = os.name == 'nt'
+        
         # Use Popen instead of run to be able to read streams on the fly
         proc = subprocess.Popen(
-            cmd,
+            cmd if not use_shell else subprocess.list2cmdline(cmd),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             cwd=str(cwd) if cwd else None,
             bufsize=1,  # line buffered
-            universal_newlines=True
+            universal_newlines=True,
+            shell=use_shell
         )
 
         def read_stream(stream: io.TextIOBase, target_list: list, is_stderr: bool):

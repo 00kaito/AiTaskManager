@@ -5,8 +5,8 @@ config.py — central orchestrator configuration
 import os
 import shutil
 import subprocess
-from dataclasses import dataclass, field
 from pathlib import Path
+from dataclasses import dataclass, field
 from typing import Optional
 
 
@@ -16,18 +16,36 @@ def _find_bin(name: str, extra_paths: list[str] = None) -> str:
     if found:
         return found
     candidates = extra_paths or []
-    # Common nvm / npm global locations for all users in /home
-    home_dirs = list(Path("/home").iterdir()) if Path("/home").exists() else []
-    for home in home_dirs:
+    
+    # Platform independent home directory
+    home = Path.home()
+    
+    # Common nvm / npm global locations
+    if os.name != 'nt':
+        # Linux/macOS specific paths
         nvm_base = home / ".nvm" / "versions" / "node"
         if nvm_base.exists():
             for node_ver in sorted(nvm_base.iterdir(), reverse=True):
                 candidates.append(str(node_ver / "bin" / name))
         candidates.append(str(home / ".local" / "bin" / name))
-    candidates += [f"/usr/local/bin/{name}", f"/usr/bin/{name}"]
+        candidates += [f"/usr/local/bin/{name}", f"/usr/bin/{name}"]
+    else:
+        # Windows specific paths
+        # nvm-windows usually puts things in AppData or Program Files, but shutil.which should find them if in PATH.
+        # Adding some common Windows local bin locations
+        candidates.append(str(home / "AppData" / "Roaming" / "npm" / name))
+        candidates.append(str(home / "AppData" / "Local" / "bin" / name))
+
     for path in candidates:
-        if Path(path).is_file():
-            return path
+        p = Path(path)
+        if p.is_file():
+            return str(p)
+        # Check for .exe or .cmd on Windows
+        if os.name == 'nt':
+            for ext in ['.exe', '.cmd', '.bat']:
+                if Path(f"{path}{ext}").is_file():
+                    return f"{path}{ext}"
+                    
     return name  # fallback — return original name, subprocess will raise a readable error
 
 

@@ -53,32 +53,54 @@ Handles persistence of tasks and their history using an SQLite database. It prov
 
 ## Installation (Professional and Safe)
 
-The recommended method for installing CLI tools is to isolate them in a separate virtual environment to avoid conflicts with system packages (the `externally-managed-environment` error).
+The recommended method for installing CLI tools is to isolate them in a separate virtual environment to avoid conflicts with system packages.
 
-### Method 1: Automatic (via pipx)
-The safest standard for CLI tools. Installs the application in an isolated environment and automatically creates symlinks.
+### 🐧 Linux / macOS
+
+#### Method 1: Automatic (via pipx)
+The safest standard for CLI tools.
 ```bash
 pipx install .
 ```
-*(If you don't have pipx: `sudo apt install pipx && pipx ensurepath`)*
 
-### Method 2: Manual (Venv + Symlink)
-If you prefer full control without additional tools:
-
-1. **Create an isolated environment** inside the orchestrator directory:
+#### Method 2: Manual (Venv + Symlink)
+1. **Create an isolated environment**:
    ```bash
    python3 -m venv venv
    ./venv/bin/pip install .
    ```
-
-2. **Create symbolic links** in your local binary folder:
+2. **Create symbolic links**:
    ```bash
    mkdir -p ~/.local/bin
    ln -s $(pwd)/venv/bin/orch ~/.local/bin/orch
    ln -s $(pwd)/venv/bin/orch-monitor ~/.local/bin/orch-monitor
    ```
 
-After following one of the above methods, the `orch` and `orch-monitor` commands will be available globally without risking system stability.
+### 🪟 Windows
+
+#### Method 1: Automatic (via pipx)
+If you have `pipx` installed (e.g., via `scoop` or `pip`):
+```powershell
+pipx install .
+```
+
+#### Method 2: Manual (Developer Mode)
+Since symlinks on Windows often require Administrator privileges, the easiest way is to install the package in "editable" mode or add the venv Scripts folder to your PATH.
+
+1. **Create a virtual environment**:
+   ```powershell
+   python -m venv venv
+   # If you get an error about script execution, run: Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+   .\venv\Scripts\activate
+   ```
+2. **Install the package**:
+   ```powershell
+   pip install -e .
+   ```
+   *After this, as long as the venv is active, `orch` and `orch-monitor` are available.*
+
+3. **(Optional) Add to User PATH**:
+   Add the absolute path to `venv\Scripts` to your environment variables to use it globally.
 
 ---
 
