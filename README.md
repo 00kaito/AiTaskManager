@@ -100,7 +100,26 @@ Since symlinks on Windows often require Administrator privileges, the easiest wa
    *After this, as long as the venv is active, `orch` and `orch-monitor` are available.*
 
 3. **(Optional) Add to User PATH**:
-   Add the absolute path to `venv\Scripts` to your environment variables to use it globally.
+   Add the absolute path to `venv\\Scripts` to your environment variables to use it globally.
+
+---
+
+## Optional: Serena for Gemini CLI (Highly Recommended)
+
+For enhanced code intelligence and more efficient token usage when using the Gemini CLI developer runtime, it is highly recommended to install and configure **Serena** as an MCP (Model Context Protocol) server.
+
+### 1. Install Serena
+Use `uv` to install `serena-agent` as a tool:
+```bash
+uv tool install -p 3.13 serena-agent
+```
+
+### 2. Configure Gemini CLI
+Add Serena as an MCP server to your Gemini CLI configuration:
+```bash
+gemini mcp add serena
+```
+This will allow Gemini CLI to use Serena's specialized tools for codebase analysis, architectural mapping, and symbolic editing.
 
 ---
 
